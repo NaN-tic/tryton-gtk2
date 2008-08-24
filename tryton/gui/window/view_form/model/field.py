@@ -60,7 +60,7 @@ class CharField(object):
         self.get_state_attrs(model)['valid'] = res
         return res
 
-    def set(self, model, value, test_state=True, modified=False):
+    def set(self, model, value, modified=False):
         model.value[self.name] = value
         if modified:
             model.modified = True
@@ -74,9 +74,9 @@ class CharField(object):
         return self.get(model, check_load=check_load, readonly=True,
                 modified=False)
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         internal = model.value.get(self.name, False)
-        self.set(model, value, test_state)
+        self.set(model, value)
         if (internal or False) != (model.value.get(self.name, False) or False):
             model.modified = True
             model.modified_fields.setdefault(self.name)
@@ -119,8 +119,7 @@ class CharField(object):
                 value = model.expr_eval(state_changes['value'],
                         check_load=False)
                 if value:
-                    self.set(model, value, test_state=False,
-                            modified=True)
+                    self.set(model, value, modified=True)
         except:
             pass
 
@@ -134,22 +133,22 @@ class CharField(object):
 
 class SelectionField(CharField):
 
-    def set(self, model, value, test_state=True, modified=False):
+    def set(self, model, value, modified=False):
         if isinstance(value, (list, tuple)):
             value = value[0]
         return super(SelectionField, self).set(model, value,
-                test_state=test_state,modified=modified)
+                modified=modified)
 
 
 class DateTimeField(CharField):
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         if value:
             date = time.strptime(value, DHM_FORMAT)
             value = datetime.datetime(date[0], date[1], date[2], date[3],
                     date[4], date[5])
         return super(DateTimeField, self).set_client(model, value,
-                test_state=test_state, force_change=force_change)
+                force_change=force_change)
 
     def get_client(self, model):
         value = super(DateTimeField, self).get_client(model)
@@ -158,12 +157,12 @@ class DateTimeField(CharField):
 
 class DateField(CharField):
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         if value:
             date = time.strptime(value, DT_FORMAT)
             value = datetime.date(date[0], date[1], date[2])
         return super(DateField, self).set_client(model, value,
-                test_state=test_state, force_change=force_change)
+                force_change=force_change)
 
     def get_client(self, model):
         value = super(DateField, self).get_client(model)
@@ -172,9 +171,9 @@ class DateField(CharField):
 
 class FloatField(CharField):
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         internal = model.value[self.name]
-        self.set(model, value, test_state)
+        self.set(model, value)
         if isinstance(self.attrs.get('digits'), str):
             digits = model.expr_eval(self.attrs['digits'])
         else:
@@ -190,10 +189,10 @@ class FloatField(CharField):
 
 class NumericField(FloatField):
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         value = Decimal(str(value))
         internal = model.value[self.name]
-        self.set(model, value, test_state)
+        self.set(model, value)
         if isinstance(self.attrs.get('digits'), str):
             digits = model.expr_eval(self.attrs['digits'])
         else:
@@ -217,10 +216,10 @@ class IntegerField(CharField):
 
 class BooleanField(CharField):
 
-    def set_client(self, model, value, test_state=True, force_change=False):
+    def set_client(self, model, value, force_change=False):
         value = bool(value)
         internal = bool(model.value.get(self.name, False))
-        self.set(model, value, test_state)
+        self.set(model, value)
         if internal != bool(model.value.get(self.name, False)):
             model.modified = True
             model.modified_fields.setdefault(self.name)
@@ -261,7 +260,7 @@ class M2OField(CharField):
             return model.value[self.name][1]
         return False
 
-    def set(self, model, value, test_state=False, modified=False):
+    def set(self, model, value, modified=False):
         if value and isinstance(value, (int, basestring, long)):
             rpc2 = RPCProxy(self.attrs['relation'])
             try:
@@ -275,9 +274,9 @@ class M2OField(CharField):
             model.modified = True
             model.modified_fields.setdefault(self.name)
 
-    def set_client(self, model, value, test_state=False, force_change=False):
+    def set_client(self, model, value, force_change=False):
         internal = model.value[self.name]
-        self.set(model, value, test_state)
+        self.set(model, value)
         if internal != model.value[self.name]:
             model.modified = True
             model.modified_fields.setdefault(self.name)
@@ -308,15 +307,15 @@ class M2MField(CharField):
     def get_client(self, model):
         return model.value[self.name] or []
 
-    def set(self, model, value, test_state=False, modified=False):
+    def set(self, model, value, modified=False):
         model.value[self.name] = value or []
         if modified:
             model.modified = True
             model.modified_fields.setdefault(self.name)
 
-    def set_client(self, model, value, test_state=False, force_change=False):
+    def set_client(self, model, value, force_change=False):
         internal = model.value[self.name]
-        self.set(model, value, test_state, modified=False)
+        self.set(model, value, modified=False)
         if set(internal) != set(value):
             model.modified = True
             model.modified_fields.setdefault(self.name)
@@ -381,7 +380,7 @@ class O2MField(CharField):
             result.append(model2.get_eval(check_load=check_load))
         return result
 
-    def set(self, model, value, test_state=False, modified=False):
+    def set(self, model, value, modified=False):
         from group import ModelRecordGroup
         mod = ModelRecordGroup(self.attrs['relation'], {}, model.window,
                 parent=model)
@@ -393,8 +392,8 @@ class O2MField(CharField):
         #self.internal.signal_connect(self.internal, 'model-changed',
         #       self._model_changed)
 
-    def set_client(self, model, value, test_state=False, force_change=False):
-        self.set(model, value, test_state=test_state)
+    def set_client(self, model, value, force_change=False):
+        self.set(model, value)
         model.signal('record-changed', model)
 
     def set_default(self, model, value):
@@ -511,7 +510,7 @@ class ReferenceField(CharField):
                         str(model.value[self.name][1]))
         return False
 
-    def set_client(self, model, value, test_state=False, force_change=False):
+    def set_client(self, model, value, force_change=False):
         internal = model.value[self.name]
         model.value[self.name] = value
         if (internal or False) != (model.value[self.name] or False):
@@ -520,7 +519,7 @@ class ReferenceField(CharField):
             self.sig_changed(model)
             model.signal('record-changed', model)
 
-    def set(self, model, value, test_state=False, modified=False):
+    def set(self, model, value, modified=False):
         if not value:
             model.value[self.name] = False
             return
