@@ -28,6 +28,7 @@ class WinSearch(object):
                 gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
                 gtk.STOCK_OK, gtk.RESPONSE_OK))
         self.win.set_icon(TRYTON_ICON)
+        self.win.set_has_separator(True)
         self.win.set_default_response(gtk.RESPONSE_APPLY)
         hbox = gtk.HBox()
         hbox.show()
@@ -140,6 +141,7 @@ class WinSearch(object):
 
     def destroy(self):
         self.parent.present()
+        self.screen.destroy()
         self.win.destroy()
 
     def run(self):

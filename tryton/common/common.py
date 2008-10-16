@@ -71,11 +71,12 @@ def refresh_langlist(lang_widget, host, port):
 def request_server(server_widget, parent):
     result = False
     dialog = gtk.Dialog(
-        title =  _('Tryton Connection'),
-        parent = parent,
-        flags = gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT |
-            gtk.WIN_POS_CENTER_ON_PARENT | 
+        title= _('Tryton Connection'),
+        parent=parent,
+        flags=gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT |
+            gtk.WIN_POS_CENTER_ON_PARENT |
             gtk.gdk.WINDOW_TYPE_HINT_DIALOG,)
+    dialog.set_has_separator(True)
     vbox = gtk.VBox()
     table = gtk.Table(2, 2, False)
     table.set_border_width(12)
@@ -136,43 +137,53 @@ def selection(title, values, parent, alwaysask=False):
         key = values.keys()[0]
         return (key, values[key])
 
-    xml = glade.XML(GLADE, "win_selection",
-            gettext.textdomain())
-    win = xml.get_widget('win_selection')
-    win.set_icon(TRYTON_ICON)
-    win.set_transient_for(parent)
+    dialog = gtk.Dialog(_('Selection'), parent,
+            gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT,
+            (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
+                gtk.STOCK_OK, gtk.RESPONSE_OK))
+    dialog.set_icon(TRYTON_ICON)
+    dialog.set_has_separator(True)
+    dialog.set_default_response(gtk.RESPONSE_OK)
+    dialog.set_size_request(400, 400)
 
-    label = xml.get_widget('win_sel_title')
-    if title:
-        label.set_text(title)
+    label = gtk.Label(title or _('Your selection:'))
+    dialog.vbox.pack_start(label, False, False)
+    dialog.vbox.pack_start(gtk.HSeparator(), False, True)
 
-    sel_tree = xml.get_widget('win_sel_tree')
-    sel_tree.get_selection().set_mode('single')
+    scrolledwindow = gtk.ScrolledWindow()
+    scrolledwindow.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+    treeview = gtk.TreeView()
+    treeview.set_headers_visible(False)
+    scrolledwindow.add(treeview)
+    dialog.vbox.pack_start(scrolledwindow, True, True)
+
+    treeview.get_selection().set_mode('single')
     cell = gtk.CellRendererText()
     column = gtk.TreeViewColumn("Widget", cell, text=0)
-    sel_tree.append_column(column)
-    sel_tree.set_search_column(0)
+    treeview.append_column(column)
+    treeview.set_search_column(0)
     model = gtk.ListStore(gobject.TYPE_STRING)
     keys = values.keys()
     keys.sort()
     for val in keys:
-        model.append([val])
+        model.append([str(val)])
 
-    sel_tree.set_model(model)
-    sel_tree.connect('row-activated',
-            lambda x, y, z: win.response(gtk.RESPONSE_OK) or True)
+    treeview.set_model(model)
+    treeview.connect('row-activated',
+            lambda x, y, z: dialog.response(gtk.RESPONSE_OK) or True)
 
-    response = win.run()
+    dialog.show_all()
+    response = dialog.run()
     res = None
     if response == gtk.RESPONSE_OK:
-        sel = sel_tree.get_selection().get_selected()
+        sel = treeview.get_selection().get_selected()
         if sel:
             (model, i) = sel
             if i:
-                value = model.get_value(i, 0)
+                value = model.get_value(i, 0).decode('utf-8')
                 res = (value, values[value])
     parent.present()
-    win.destroy()
+    dialog.destroy()
     return res
 
 def file_selection(title, filename='', parent=None,
@@ -305,6 +316,7 @@ def error(title, parent, details):
     dialog = gtk.Dialog(_('Error'), parent,
             gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
     dialog.set_icon(TRYTON_ICON)
+    dialog.set_has_separator(True)
 
     but_send = gtk.Button(_('Report Bug'))
     dialog.add_action_widget(but_send, gtk.RESPONSE_OK)
@@ -380,6 +392,7 @@ def send_bugtracker(msg, parent):
                 gtk.STOCK_OK, gtk.RESPONSE_OK))
     win.set_icon(TRYTON_ICON)
     win.set_default_response(gtk.RESPONSE_OK)
+    win.set_has_separator(True)
 
     hbox = gtk.HBox()
     image = gtk.Image()
@@ -482,26 +495,6 @@ def message(msg, parent, msg_type=gtk.MESSAGE_INFO):
 def to_xml(string):
     return string.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
 
-def message_box(title, msg, parent):
-    dia = glade.XML(GLADE, "dia_message_box",
-            gettext.textdomain())
-    win = dia.get_widget('dia_message_box')
-    label = dia.get_widget('msg_title')
-    label.set_text(title)
-
-    buf = dia.get_widget('msg_tv').get_buffer()
-    iter_start = buf.get_start_iter()
-    buf.insert(iter_start, msg)
-
-    win.set_transient_for(parent)
-    win.set_icon(TRYTON_ICON)
-
-    win.run()
-    parent.present()
-    win.destroy()
-    return True
-
-
 def warning(msg, parent, title=''):
     dialog = gtk.MessageDialog(parent, gtk.DIALOG_DESTROY_WITH_PARENT,
             gtk.MESSAGE_WARNING, gtk.BUTTONS_OK)
@@ -519,11 +512,12 @@ def warning(msg, parent, title=''):
     return True
 
 def sur(msg, parent):
-    dialog = gtk.Dialog(_('Confirmation'), parent, gtk.DIALOG_MODAL 
-            | gtk.DIALOG_DESTROY_WITH_PARENT | gtk.WIN_POS_CENTER_ON_PARENT 
-            | gtk.gdk.WINDOW_TYPE_HINT_DIALOG,)
+    dialog = gtk.Dialog(_('Confirmation'), parent, gtk.DIALOG_MODAL
+            | gtk.DIALOG_DESTROY_WITH_PARENT | gtk.WIN_POS_CENTER_ON_PARENT
+            | gtk.gdk.WINDOW_TYPE_HINT_DIALOG)
     dialog.set_icon(TRYTON_ICON)
-    dialog.set_size_request(350, 143)
+    dialog.set_has_separator(True)
+    dialog.set_size_request(350, 150)
     hbox = gtk.HBox()
     image = gtk.Image()
     image.set_from_stock('tryton-dialog-information',
@@ -535,31 +529,44 @@ def sur(msg, parent):
     hbox.pack_start(label, True, True)
     dialog.vbox.pack_start(hbox)
     dialog.add_button("gtk-cancel", gtk.RESPONSE_CANCEL)
-    dialog.add_button("gtk-ok", gtk.RESPONSE_OK | gtk.CAN_DEFAULT 
+    dialog.add_button("gtk-ok", gtk.RESPONSE_OK | gtk.CAN_DEFAULT
             | gtk.HAS_DEFAULT)
     dialog.set_default_response(gtk.RESPONSE_OK)
     dialog.set_transient_for(parent)
     dialog.show_all()
-    dialog.set_transient_for(parent)
-    dialog.set_icon(TRYTON_ICON)
     response = dialog.run()
     parent.present()
     dialog.destroy()
     return response == gtk.RESPONSE_OK
 
 def sur_3b(msg, parent):
-    xml = glade.XML(GLADE, "win_quest_3b",
-            gettext.textdomain())
-    win = xml.get_widget('win_quest_3b')
-    label = xml.get_widget('label')
-    label.set_text(msg)
+    dialog = gtk.Dialog(_('Confirmation'), parent, gtk.DIALOG_MODAL
+            | gtk.DIALOG_DESTROY_WITH_PARENT | gtk.WIN_POS_CENTER_ON_PARENT
+            | gtk.gdk.WINDOW_TYPE_HINT_DIALOG)
+    dialog.set_icon(TRYTON_ICON)
+    dialog.set_has_separator(True)
+    dialog.set_size_request(350, 150)
+    hbox = gtk.HBox()
+    image = gtk.Image()
+    image.set_from_stock('tryton-dialog-information',
+            gtk.ICON_SIZE_DIALOG)
+    image.set_padding(15, 15)
+    hbox.pack_start(image, False, False)
+    label = gtk.Label('%s' % (to_xml(msg)))
+    label.set_size_request(200, 60)
+    hbox.pack_start(label, True, True)
+    dialog.vbox.pack_start(hbox)
+    dialog.add_button("gtk-cancel", gtk.RESPONSE_CANCEL)
+    dialog.add_button("gtk-no", gtk.RESPONSE_NO)
+    dialog.add_button("gtk-yes", gtk.RESPONSE_YES | gtk.CAN_DEFAULT
+            | gtk.HAS_DEFAULT)
+    dialog.set_default_response(gtk.RESPONSE_YES)
+    dialog.set_transient_for(parent)
+    dialog.show_all()
 
-    win.set_transient_for(parent)
-    win.set_icon(TRYTON_ICON)
-
-    response = win.run()
+    response = dialog.run()
     parent.present()
-    win.destroy()
+    dialog.destroy()
     if response == gtk.RESPONSE_YES:
         return 'ok'
     elif response == gtk.RESPONSE_NO:
@@ -575,6 +582,7 @@ def ask(question, parent, visibility=True):
             (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
                 gtk.STOCK_OK, gtk.RESPONSE_OK))
     win.set_icon(TRYTON_ICON)
+    win.set_has_separator(True)
     win.set_default_response(gtk.RESPONSE_OK)
 
     hbox = gtk.HBox()
@@ -602,15 +610,46 @@ def ask(question, parent, visibility=True):
         return None
 
 def concurrency(resource, obj_id, context, parent):
-    dia = glade.XML(GLADE, 'dialog_concurrency_exception', gettext.textdomain())
-    win = dia.get_widget('dialog_concurrency_exception')
+    dialog = gtk.Dialog(_('Concurrency Exception'), parent, gtk.DIALOG_MODAL
+            | gtk.DIALOG_DESTROY_WITH_PARENT | gtk.WIN_POS_CENTER_ON_PARENT
+            | gtk.gdk.WINDOW_TYPE_HINT_DIALOG)
+    dialog.set_icon(TRYTON_ICON)
+    dialog.set_has_separator(True)
+    dialog.set_default_response(gtk.RESPONSE_CANCEL)
+    hbox = gtk.HBox()
+    image = gtk.Image()
+    image.set_from_stock('tryton-dialog-information',
+            gtk.ICON_SIZE_DIALOG)
+    image.set_padding(15, 15)
+    hbox.pack_start(image, False, False)
+    label = gtk.Label()
+    label.set_padding(15, 15)
+    label.set_use_markup(True)
+    label.set_markup(_('''<b>Write Concurrency Warning:</b>
 
-    win.set_transient_for(parent)
-    win.set_icon(TRYTON_ICON)
+This record has been modified while you were editing it.
+  Choose:
+   - "Cancel" to cancel saving;
+   - "Compare" to see the modified version;
+   - "Write Anyway" to save your current version.'''))
+    hbox.pack_start(label, True, True)
+    dialog.vbox.pack_start(hbox)
+    dialog.add_button('gtk-cancel', gtk.RESPONSE_CANCEL)
+    compare_button = gtk.Button(_('Compare'))
+    image = gtk.Image()
+    image.set_from_stock('tryton-find-replace', gtk.ICON_SIZE_BUTTON)
+    compare_button.set_image(image)
+    dialog.add_action_widget(compare_button, gtk.RESPONSE_APPLY)
+    write_button = gtk.Button(_('Write Anyway'))
+    image = gtk.Image()
+    image.set_from_stock('tryton-save', gtk.ICON_SIZE_BUTTON)
+    write_button.set_image(image)
+    dialog.add_action_widget(write_button, gtk.RESPONSE_OK)
+    dialog.show_all()
 
-    res = win.run()
+    res = dialog.run()
     parent.present()
-    win.destroy()
+    dialog.destroy()
 
     if res == gtk.RESPONSE_OK:
         return True
