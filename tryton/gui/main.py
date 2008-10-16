@@ -36,7 +36,7 @@ class Main(object):
         super(Main, self).__init__()
 
         self.window = gtk.Window()
-        self.window.set_default_size(800, 700)
+        self.window.set_default_size(900, 750)
         self.window.set_title('Tryton')
         self.window.set_icon(TRYTON_ICON)
         self.window.connect("destroy", Main.sig_quit)
@@ -1140,26 +1140,24 @@ class Main(object):
             label2 = gtk.Label('...')
             self.tooltips.set_tip(label2, page.name)
             hbox.pack_start(label2, expand=False, fill=False)
-        eb = gtk.EventBox()
-        self.tooltips.set_tip(eb, _('Close Tab'))
-        eb.set_events(gtk.gdk.BUTTON_PRESS)
-        eb.set_border_width(1)
 
+        button = gtk.Button()
         img = gtk.Image()
-        img.set_from_stock('tryton-close', gtk.ICON_SIZE_SMALL_TOOLBAR)
-        eb.add(img)
+        img.set_from_stock('tryton-close', gtk.ICON_SIZE_MENU)
+        width, height = img.size_request()
+        button.set_relief(gtk.RELIEF_NONE)
+        button.unset_flags(gtk.CAN_FOCUS)
+        button.add(img)
+        self.tooltips.set_tip(button, _('Close Tab'))
+        button.connect('clicked', self._sig_remove_book, page.widget)
+        hbox.pack_start(button, expand=False, fill=False)
 
-        def enter(widget, event, img):
-            img.set_from_stock('tryton-close-hi', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        def on_style_set(widget, prevstyle):
+            x, y = gtk.icon_size_lookup_for_settings(button.get_settings(),
+                    gtk.ICON_SIZE_MENU)
+            button.set_size_request(x, y)
+        hbox.connect("style-set", on_style_set)
 
-        def leave(widget, event, img):
-            img.set_from_stock('tryton-close', gtk.ICON_SIZE_SMALL_TOOLBAR)
-
-        eb.connect('button_release_event', self._sig_remove_book, page.widget)
-        eb.connect('enter_notify_event', enter, img)
-        eb.connect('leave_notify_event', leave, img)
-
-        hbox.pack_start(eb, expand=False, fill=False)
         hbox.show_all()
         hbox.set_size_request(120, -1)
         label_menu = gtk.Label(page.name)
@@ -1187,9 +1185,11 @@ class Main(object):
         else:
             self.buttons['but_attach'].set_stock_id('tryton-attachment')
 
-    def _sig_remove_book(self, widget, event, page_widget):
+    def _sig_remove_book(self, widget, page_widget):
         for page in self.pages:
             if page.widget == page_widget:
+                page_num = self.notebook.page_num(page.widget)
+                self.notebook.set_current_page(page_num)
                 if 'but_close' in page.handlers:
                     res = page.handlers['but_close']()
                     if not res:
