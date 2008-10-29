@@ -257,14 +257,15 @@ class DateTime(WidgetInterface):
                 gtk.STOCK_OK, gtk.RESPONSE_OK))
         win.set_has_separator(True)
         win.set_icon(TRYTON_ICON)
+        win.vbox.set_spacing(2)
 
-        hbox = gtk.HBox()
+        hbox = gtk.HBox(spacing=2)
         hbox.pack_start(gtk.Label(_('Hour:')), expand=False, fill=False)
-        widget_hour = gtk.SpinButton(gtk.Adjustment(0, 0, 23, 1, 5, 5), 1, 0)
+        widget_hour = gtk.SpinButton(gtk.Adjustment(0, 0, 23, 1, 5), 1, 0)
         hbox.pack_start(widget_hour, expand=True, fill=True)
         hbox.pack_start(gtk.Label(_('Minute:')), expand=False, fill=False)
         widget_minute = gtk.SpinButton(
-                gtk.Adjustment(0, 0, 59, 1, 10, 10), 1, 0)
+                gtk.Adjustment(0, 0, 59, 1, 10), 1, 0)
         hbox.pack_start(widget_minute, expand=True, fill=True)
         win.vbox.pack_start(hbox, expand=False, fill=True)
 

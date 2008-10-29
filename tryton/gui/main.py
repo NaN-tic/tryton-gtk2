@@ -4,9 +4,8 @@ import gettext
 import urlparse
 import gobject
 import gtk
-from gtk import glade
 import tryton.rpc as rpc
-from tryton.config import CONFIG, GLADE, TRYTON_ICON, PIXMAPS_DIR, DATA_DIR
+from tryton.config import CONFIG, TRYTON_ICON, PIXMAPS_DIR, DATA_DIR, get_home_dir
 import tryton.common as common
 from tryton.action import Action
 from tryton.gui.window import Window
@@ -14,9 +13,11 @@ from tryton.gui.window.preference import Preference
 from tryton.gui.window import FilesActions
 from tryton.gui.window.dblogin import DBLogin
 from tryton.gui.window.dbcreate import DBCreate
+from tryton.gui.window.dbdumpdrop import DBBackupDrop
 from tryton.gui.window.tips import Tips
 from tryton.gui.window.about import About
 from tryton.gui.window.shortcuts import Shortcuts
+from tryton.gui.window.dbrestore import DBRestore
 import re
 import base64
 import tryton.translate as translate
@@ -44,6 +45,48 @@ class Main(object):
         self.accel_group = gtk.AccelGroup()
         self.window.add_accel_group(self.accel_group)
 
+        gtk.accel_map_add_entry('<tryton>/File/Connect', gtk.keysyms.O,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/File/Quit', gtk.keysyms.Q,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/New', gtk.keysyms.N,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Save', gtk.keysyms.S,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Duplicate', gtk.keysyms.D,
+                gtk.gdk.CONTROL_MASK|gtk.gdk.SHIFT_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Delete', gtk.keysyms.D,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Find', gtk.keysyms.F,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Next', gtk.keysyms.Page_Down,
+                0)
+        gtk.accel_map_add_entry('<tryton>/Form/Previous', gtk.keysyms.Page_Up,
+                0)
+        gtk.accel_map_add_entry('<tryton>/Form/Switch View', gtk.keysyms.L,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Menu', gtk.keysyms.T,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Home', gtk.keysyms.H,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Close', gtk.keysyms.W,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Previous Tab', gtk.keysyms.Page_Up,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Next Tab', gtk.keysyms.Page_Down,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Goto', gtk.keysyms.G,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Reload', gtk.keysyms.R,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Actions', gtk.keysyms.E,
+                gtk.gdk.CONTROL_MASK)
+        gtk.accel_map_add_entry('<tryton>/Form/Print', gtk.keysyms.P,
+                gtk.gdk.CONTROL_MASK)
+
+        if hasattr(gtk, 'accel_map_load'):
+            gtk.accel_map_load(os.path.join(get_home_dir(), '.trytonsc'))
+
         self.tooltips = gtk.Tooltips()
 
         toolbar = gtk.Toolbar()
@@ -62,6 +105,8 @@ class Main(object):
 
         menu_file = self._set_menu_file()
         menuitem_file.set_submenu(menu_file)
+        menu_file.set_accel_group(self.accel_group)
+        menu_file.set_accel_path('<tryton>/File')
 
         menuitem_user = gtk.MenuItem(_('_User'))
         self.menuitem_user = menuitem_user
@@ -70,6 +115,7 @@ class Main(object):
 
         menu_user = self._set_menu_user()
         menuitem_user.set_submenu(menu_user)
+        menuitem_user.set_accel_path('<tryton>/User')
 
         menuitem_form = gtk.MenuItem(_('For_m'))
         self.menuitem_form = menuitem_form
@@ -78,12 +124,15 @@ class Main(object):
 
         menu_form = self._set_menu_form()
         menuitem_form.set_submenu(menu_form)
+        menu_form.set_accel_group(self.accel_group)
+        menu_form.set_accel_path('<tryton>/Form')
 
         menuitem_options = gtk.MenuItem(_('_Options'))
         menubar.add(menuitem_options)
 
         menu_options = self._set_menu_options()
         menuitem_options.set_submenu(menu_options)
+        menuitem_options.set_accel_path('<tryton>/Options')
 
         menuitem_plugins = gtk.MenuItem(_('_Plugins'))
         self.menuitem_plugins = menuitem_plugins
@@ -92,17 +141,20 @@ class Main(object):
 
         menu_plugins = self._set_menu_plugins()
         menuitem_plugins.set_submenu(menu_plugins)
+        menuitem_plugins.set_accel_path('<tryton>/Plugins')
 
         menuitem_shortcut = gtk.MenuItem(_('_Shortcuts'))
         self.menuitem_shortcut = menuitem_shortcut
         self.menuitem_shortcut.set_sensitive(False)
         menubar.add(menuitem_shortcut)
+        menuitem_shortcut.set_accel_path('<tryton>/Shortcuts')
 
         menuitem_help = gtk.MenuItem(_('_Help'))
         menubar.add(menuitem_help)
 
         menu_help = self._set_menu_help()
         menuitem_help.set_submenu(menu_help)
+        menuitem_help.set_accel_path('<tryton>/Help')
 
         vbox.pack_start(toolbar, False, True)
 
@@ -181,7 +233,8 @@ class Main(object):
 
         self.sig_mode()
 
-        if os.name in ('nt', 'mac') or os.uname()[0] == 'Darwin':
+        if os.name in ('nt', 'mac') or \
+                (hasattr(os, 'uname') and os.uname()[0] == 'Darwin'):
             # Disable actions, on win32 we use os.startfile
             # and on mac we use /usr/bin/open
             self.menuitem_actions.set_sensitive(False)
@@ -197,12 +250,11 @@ class Main(object):
         image = gtk.Image()
         image.set_from_stock('tryton-connect', gtk.ICON_SIZE_MENU)
         imagemenuitem_connect.set_image(image)
-        imagemenuitem_connect.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.O, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_connect.connect('activate', self.sig_login)
+        imagemenuitem_connect.set_accel_path('<tryton>/File/Connect')
         menu_file.add(imagemenuitem_connect)
 
-        imagemenuitem_disconnect = gtk.ImageMenuItem(_('_Disconnect...'))
+        imagemenuitem_disconnect = gtk.ImageMenuItem(_('_Disconnect'))
         image = gtk.Image()
         image.set_from_stock('tryton-disconnect', gtk.ICON_SIZE_MENU)
         imagemenuitem_disconnect.set_image(image)
@@ -220,59 +272,49 @@ class Main(object):
         menu_database = gtk.Menu()
         imagemenuitem_database.set_submenu(menu_database)
 
-        imagemenuitem_db_new = gtk.ImageMenuItem(_('_New Database'))
+        imagemenuitem_db_new = gtk.ImageMenuItem(_('_New Database...'))
         image = gtk.Image()
         image.set_from_stock('tryton-folder-new', gtk.ICON_SIZE_MENU)
         imagemenuitem_db_new.set_image(image)
         imagemenuitem_db_new.connect('activate', self.sig_db_new)
         menu_database.add(imagemenuitem_db_new)
 
-        imagemenuitem_db_restore = gtk.ImageMenuItem(_('_Restore Database'))
+        imagemenuitem_db_restore = gtk.ImageMenuItem(_('_Restore Database...'))
         image = gtk.Image()
         image.set_from_stock('tryton-folder-saved-search', gtk.ICON_SIZE_MENU)
         imagemenuitem_db_restore.set_image(image)
         imagemenuitem_db_restore.connect('activate', self.sig_db_restore)
         menu_database.add(imagemenuitem_db_restore)
 
-        imagemenuitem_db_dump = gtk.ImageMenuItem(_('_Backup Database'))
+        imagemenuitem_db_dump = gtk.ImageMenuItem(_('_Backup Database...'))
         image = gtk.Image()
         image.set_from_stock('tryton-save-as', gtk.ICON_SIZE_MENU)
         imagemenuitem_db_dump.set_image(image)
         imagemenuitem_db_dump.connect('activate', self.sig_db_dump)
         menu_database.add(imagemenuitem_db_dump)
 
-        imagemenuitem_db_drop = gtk.ImageMenuItem(_('Dro_p Database'))
+        imagemenuitem_db_drop = gtk.ImageMenuItem(_('Dro_p Database...'))
         image = gtk.Image()
         image.set_from_stock('tryton-delete', gtk.ICON_SIZE_MENU)
         imagemenuitem_db_drop.set_image(image)
         imagemenuitem_db_drop.connect('activate', self.sig_db_drop)
         menu_database.add(imagemenuitem_db_drop)
 
-        menu_database.add(gtk.SeparatorMenuItem())
-
-        imagemenuitem_db_password = gtk.ImageMenuItem(_('_Administrator Password'))
-        image = gtk.Image()
-        image.set_from_stock('tryton-users', gtk.ICON_SIZE_MENU)
-        imagemenuitem_db_password.set_image(image)
-        imagemenuitem_db_password.connect('activate', self.sig_db_password)
-        menu_database.add(imagemenuitem_db_password)
-
         menu_file.add(gtk.SeparatorMenuItem())
 
-        imagemenuitem_close = gtk.ImageMenuItem(_('_Quit'), self.accel_group)
+        imagemenuitem_close = gtk.ImageMenuItem(_('_Quit...'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-log-out', gtk.ICON_SIZE_MENU)
         imagemenuitem_close.set_image(image)
-        imagemenuitem_close.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Q, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_close.connect('activate', self.sig_close)
+        imagemenuitem_close.set_accel_path('<tryton>/File/Quit')
         menu_file.add(imagemenuitem_close)
         return menu_file
 
     def _set_menu_user(self):
         menu_user = gtk.Menu()
 
-        imagemenuitem_preference = gtk.ImageMenuItem(_('_Preferences'))
+        imagemenuitem_preference = gtk.ImageMenuItem(_('_Preferences...'))
         image = gtk.Image()
         image.set_from_stock('tryton-preferences-system-session',
                 gtk.ICON_SIZE_MENU)
@@ -304,93 +346,74 @@ class Main(object):
         image = gtk.Image()
         image.set_from_stock('tryton-new', gtk.ICON_SIZE_MENU)
         imagemenuitem_new.set_image(image)
-        imagemenuitem_new.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.N, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_new.connect('activate', self._sig_child_call, 'but_new')
+        imagemenuitem_new.set_accel_path('<tryton>/Form/New')
         menu_form.add(imagemenuitem_new)
 
         imagemenuitem_save = gtk.ImageMenuItem(_('_Save'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-save', gtk.ICON_SIZE_MENU)
         imagemenuitem_save.set_image(image)
-        imagemenuitem_save.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.S, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_save.connect('activate', self._sig_child_call, 'but_save')
+        imagemenuitem_save.set_accel_path('<tryton>/Form/Save')
         menu_form.add(imagemenuitem_save)
 
         imagemenuitem_copy = gtk.ImageMenuItem(_('_Duplicate'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-copy', gtk.ICON_SIZE_MENU)
         imagemenuitem_copy.set_image(image)
-        imagemenuitem_copy.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.D, gtk.gdk.CONTROL_MASK|gtk.gdk.SHIFT_MASK,
-                gtk.ACCEL_VISIBLE)
         imagemenuitem_copy.connect('activate', self._sig_child_call, 'but_copy')
+        imagemenuitem_copy.set_accel_path('<tryton>/Form/Duplicate')
         menu_form.add(imagemenuitem_copy)
 
-        imagemenuitem_delete = gtk.ImageMenuItem(_('_Delete'), self.accel_group)
+        imagemenuitem_delete = gtk.ImageMenuItem(_('_Delete...'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-delete', gtk.ICON_SIZE_MENU)
         imagemenuitem_delete.set_image(image)
-        imagemenuitem_delete.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.D, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_delete.connect('activate', self._sig_child_call, 'but_remove')
+        imagemenuitem_delete.set_accel_path('<tryton>/Form/Delete')
         menu_form.add(imagemenuitem_delete)
 
         menu_form.add(gtk.SeparatorMenuItem())
 
-        imagemenuitem_search = gtk.ImageMenuItem(_('_Find'), self.accel_group)
+        imagemenuitem_search = gtk.ImageMenuItem(_('_Find...'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-find', gtk.ICON_SIZE_MENU)
         imagemenuitem_search.set_image(image)
-        imagemenuitem_search.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.F, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_search.connect('activate', self._sig_child_call, 'but_search')
+        imagemenuitem_search.set_accel_path('<tryton>/Form/Find')
         menu_form.add(imagemenuitem_search)
 
         imagemenuitem_next = gtk.ImageMenuItem(_('_Next'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-go-next', gtk.ICON_SIZE_MENU)
         imagemenuitem_next.set_image(image)
-        imagemenuitem_next.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Page_Down, 0, gtk.ACCEL_VISIBLE)
         imagemenuitem_next.connect('activate', self._sig_child_call, 'but_next')
+        imagemenuitem_next.set_accel_path('<tryton>/Form/Next')
         menu_form.add(imagemenuitem_next)
 
         imagemenuitem_previous = gtk.ImageMenuItem(_('_Previous'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-go-previous', gtk.ICON_SIZE_MENU)
         imagemenuitem_previous.set_image(image)
-        imagemenuitem_previous.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Page_Up, 0, gtk.ACCEL_VISIBLE)
         imagemenuitem_previous.connect('activate', self._sig_child_call, 'but_previous')
-        menu_form.add(imagemenuitem_previous)
-
-        imagemenuitem_previous = gtk.ImageMenuItem(_('_Previous'), self.accel_group)
-        image = gtk.Image()
-        image.set_from_stock('tryton-go-previous', gtk.ICON_SIZE_MENU)
-        imagemenuitem_previous.set_image(image)
-        imagemenuitem_previous.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Page_Up, 0, gtk.ACCEL_VISIBLE)
-        imagemenuitem_previous.connect('activate', self._sig_child_call, 'but_previous')
+        imagemenuitem_previous.set_accel_path('<tryton>/Form/Previous')
         menu_form.add(imagemenuitem_previous)
 
         imagemenuitem_switch = gtk.ImageMenuItem(_('_Switch View'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-fullscreen', gtk.ICON_SIZE_MENU)
         imagemenuitem_switch.set_image(image)
-        imagemenuitem_switch.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.L, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_switch.connect('activate', self._sig_child_call, 'but_switch')
+        imagemenuitem_switch.set_accel_path('<tryton>/Form/Switch View')
         menu_form.add(imagemenuitem_switch)
 
         imagemenuitem_menu = gtk.ImageMenuItem(_('_Menu'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-start-here', gtk.ICON_SIZE_MENU)
         imagemenuitem_menu.set_image(image)
-        imagemenuitem_menu.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.T, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_menu.connect('activate', self.sig_win_menu)
+        imagemenuitem_menu.set_accel_path('<tryton>/Form/Menu')
         menu_form.add(imagemenuitem_menu)
 
         menu_form.add(gtk.SeparatorMenuItem())
@@ -399,44 +422,39 @@ class Main(object):
         image = gtk.Image()
         image.set_from_stock('tryton-go-home', gtk.ICON_SIZE_MENU)
         imagemenuitem_home.set_image(image)
-        imagemenuitem_home.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.H, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_home.connect('activate', self.sig_home_new)
+        imagemenuitem_home.set_accel_path('<tryton>/Form/Home')
         menu_form.add(imagemenuitem_home)
 
         imagemenuitem_close = gtk.ImageMenuItem(_('_Close'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-close', gtk.ICON_SIZE_MENU)
         imagemenuitem_close.set_image(image)
-        imagemenuitem_close.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.W, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_close.connect('activate', self.sig_win_close)
+        imagemenuitem_close.set_accel_path('<tryton>/Form/Close')
         menu_form.add(imagemenuitem_close)
 
         imagemenuitem_win_prev = gtk.ImageMenuItem(_('_Previous Tab'), self.accel_group)
-        imagemenuitem_win_prev.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Page_Up, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_win_prev.connect('activate', self.sig_win_prev)
+        imagemenuitem_win_prev.set_accel_path('<tryton>/Form/Previous Tab')
         menu_form.add(imagemenuitem_win_prev)
 
         imagemenuitem_win_next = gtk.ImageMenuItem(_('_Next Tab'), self.accel_group)
-        imagemenuitem_win_next.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.Page_Down, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_win_next.connect('activate', self.sig_win_next)
+        imagemenuitem_win_next.set_accel_path('<tryton>/Form/Next Tab')
         menu_form.add(imagemenuitem_win_next)
 
         menu_form.add(gtk.SeparatorMenuItem())
 
-        imagemenuitem_log = gtk.ImageMenuItem(_('View _Logs'))
+        imagemenuitem_log = gtk.ImageMenuItem(_('View _Logs...'))
         imagemenuitem_log.connect('activate', self._sig_child_call, 'but_log')
         menu_form.add(imagemenuitem_log)
 
         imagemenuitem_goto_id = gtk.ImageMenuItem(_('_Go to Record ID...'),
                 self.accel_group)
-        imagemenuitem_win_next.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.G, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_goto_id.connect('activate', self._sig_child_call,
                 'but_goto_id')
+        imagemenuitem_goto_id.set_accel_path('<tryton>/Form/Goto')
         menu_form.add(imagemenuitem_goto_id)
 
         menu_form.add(gtk.SeparatorMenuItem())
@@ -445,32 +463,29 @@ class Main(object):
         image = gtk.Image()
         image.set_from_stock('tryton-refresh', gtk.ICON_SIZE_MENU)
         imagemenuitem_reload.set_image(image)
-        imagemenuitem_reload.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.R, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_reload.connect('activate', self._sig_child_call,
                 'but_reload')
+        imagemenuitem_reload.set_accel_path('<tryton>/Form/Reload')
         menu_form.add(imagemenuitem_reload)
 
         menu_form.add(gtk.SeparatorMenuItem())
 
-        imagemenuitem_action = gtk.ImageMenuItem(_('_Actions'), self.accel_group)
+        imagemenuitem_action = gtk.ImageMenuItem(_('_Actions...'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-executable', gtk.ICON_SIZE_MENU)
         imagemenuitem_action.set_image(image)
-        imagemenuitem_action.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.E, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_action.connect('activate', self._sig_child_call,
                 'but_action')
+        imagemenuitem_action.set_accel_path('<tryton>/Form/Actions')
         menu_form.add(imagemenuitem_action)
 
-        imagemenuitem_print = gtk.ImageMenuItem(_('_Print'), self.accel_group)
+        imagemenuitem_print = gtk.ImageMenuItem(_('_Print...'), self.accel_group)
         image = gtk.Image()
         image.set_from_stock('tryton-print', gtk.ICON_SIZE_MENU)
         imagemenuitem_print.set_image(image)
-        imagemenuitem_print.add_accelerator('activate', self.accel_group,
-                gtk.keysyms.P, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
         imagemenuitem_print.connect('activate', self._sig_child_call,
                 'but_print')
+        imagemenuitem_print.set_accel_path('<tryton>/Form/Print')
         menu_form.add(imagemenuitem_print)
 
         menu_form.add(gtk.SeparatorMenuItem())
@@ -636,7 +651,7 @@ class Main(object):
         if (str(CONFIG['client.form_tab_orientation']) or '0') == '90':
             radiomenuitem_vertical.set_active(True)
 
-        menuitem_actions = gtk.MenuItem(_('Files _Actions'))
+        menuitem_actions = gtk.MenuItem(_('Files _Actions...'))
         self.menuitem_actions = menuitem_actions
         menuitem_actions.connect('activate', self.sig_files_actions)
         menu_options.add(menuitem_actions)
@@ -665,14 +680,14 @@ class Main(object):
     def _set_menu_help(self):
         menu_help = gtk.Menu()
 
-        imagemenuitem_tips = gtk.ImageMenuItem(_('_Tips'))
+        imagemenuitem_tips = gtk.ImageMenuItem(_('_Tips...'))
         image = gtk.Image()
         image.set_from_stock('tryton-information', gtk.ICON_SIZE_MENU)
         imagemenuitem_tips.set_image(image)
         imagemenuitem_tips.connect('activate', self.sig_tips)
         menu_help.add(imagemenuitem_tips)
 
-        imagemenuitem_shortcuts = gtk.ImageMenuItem(_('_Keyboard Shortcuts'))
+        imagemenuitem_shortcuts = gtk.ImageMenuItem(_('_Keyboard Shortcuts...'))
         image = gtk.Image()
         image.set_from_stock('tryton-help', gtk.ICON_SIZE_MENU)
         imagemenuitem_shortcuts.set_image(image)
@@ -681,7 +696,7 @@ class Main(object):
 
         menu_help.add(gtk.SeparatorMenuItem())
 
-        imagemenuitem_about = gtk.ImageMenuItem(_('_About'))
+        imagemenuitem_about = gtk.ImageMenuItem(_('_About...'))
         image = gtk.Image()
         image.set_from_stock('gtk-about', gtk.ICON_SIZE_MENU)
         imagemenuitem_about.set_image(image)
@@ -952,6 +967,7 @@ class Main(object):
             return ([], [])
 
     def sig_login(self, widget=None, dbname=False, res=None):
+        self.sig_logout(widget, disconnect=False)
         if not res:
             try:
                 dblogin = DBLogin(self.window)
@@ -962,7 +978,6 @@ class Main(object):
                 common.process_exception(exception, self.window)
                 return
         self.window.present()
-        self.sig_logout(widget, disconnect=False)
         try:
             log_response = rpc.login(*res)
         except Exception, exception:
@@ -1076,7 +1091,7 @@ class Main(object):
             if quiet:
                 return False
             common.warning(_('You can not log into the system!\n' \
-                    'Verify if you have an menu defined on your user.'),
+                    'Verify if you have a menu defined on your user.'),
                     'Access Denied!', self.window)
             rpc.logout()
             self.refresh_ssl()
@@ -1102,16 +1117,17 @@ class Main(object):
         tryton.plugin.execute(datas, self.window)
 
     @staticmethod
-    def sig_quit(widget):
+    def sig_quit(widget=None):
         CONFIG.save()
+        if hasattr(gtk, 'accel_map_save'):
+            gtk.accel_map_save(os.path.join(get_home_dir(), '.trytonsc'))
         gtk.main_quit()
 
     def sig_close(self, widget):
         if common.sur(_("Do you really want to quit?"), parent=self.window):
             if not self.sig_logout(widget):
                 return False
-            CONFIG.save()
-            gtk.main_quit()
+            Main.sig_quit()
 
     def sig_delete(self, widget, event):
         if common.sur(_("Do you really want to quit?"), parent=self.window):
@@ -1139,26 +1155,24 @@ class Main(object):
             label2 = gtk.Label('...')
             self.tooltips.set_tip(label2, page.name)
             hbox.pack_start(label2, expand=False, fill=False)
-        eb = gtk.EventBox()
-        self.tooltips.set_tip(eb, _('Close Tab'))
-        eb.set_events(gtk.gdk.BUTTON_PRESS)
-        eb.set_border_width(1)
 
+        button = gtk.Button()
         img = gtk.Image()
-        img.set_from_stock('tryton-close', gtk.ICON_SIZE_SMALL_TOOLBAR)
-        eb.add(img)
+        img.set_from_stock('tryton-close', gtk.ICON_SIZE_MENU)
+        width, height = img.size_request()
+        button.set_relief(gtk.RELIEF_NONE)
+        button.unset_flags(gtk.CAN_FOCUS)
+        button.add(img)
+        self.tooltips.set_tip(button, _('Close Tab'))
+        button.connect('clicked', self._sig_remove_book, page.widget)
+        hbox.pack_start(button, expand=False, fill=False)
 
-        def enter(widget, event, img):
-            img.set_from_stock('tryton-close-hi', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        def on_style_set(widget, prevstyle):
+            x, y = gtk.icon_size_lookup_for_settings(button.get_settings(),
+                    gtk.ICON_SIZE_MENU)
+            button.set_size_request(x, y)
+        hbox.connect("style-set", on_style_set)
 
-        def leave(widget, event, img):
-            img.set_from_stock('tryton-close', gtk.ICON_SIZE_SMALL_TOOLBAR)
-
-        eb.connect('button_release_event', self._sig_remove_book, page.widget)
-        eb.connect('enter_notify_event', enter, img)
-        eb.connect('leave_notify_event', leave, img)
-
-        hbox.pack_start(eb, expand=False, fill=False)
         hbox.show_all()
         hbox.set_size_request(120, -1)
         label_menu = gtk.Label(page.name)
@@ -1186,9 +1200,11 @@ class Main(object):
         else:
             self.buttons['but_attach'].set_stock_id('tryton-attachment')
 
-    def _sig_remove_book(self, widget, event, page_widget):
+    def _sig_remove_book(self, widget, page_widget):
         for page in self.pages:
             if page.widget == page_widget:
+                page_num = self.notebook.page_num(page.widget)
+                self.notebook.set_current_page(page_num)
                 if 'but_close' in page.handlers:
                     res = page.handlers['but_close']()
                     if not res:
@@ -1273,109 +1289,88 @@ class Main(object):
     def sig_db_drop(self, widget):
         if not self.sig_logout(widget):
             return False
-        url, dbname, passwd = self._choose_db_select(_('Delete a database'))
+        dialog = DBBackupDrop(self.window, function='drop')
+        url, dbname, passwd = dialog.run(self.window)
         if not dbname:
             rpc.logout()
             Main.get_main().refresh_ssl()
             return
 
         host, port = url.rsplit(':', 1)
-
+        sure = common.sur_3b(_("You are going to delete a Tryton " \
+                "database.\nAre you really sure to proceed?"), self.window)
+        if sure == "ko" or sure == "cancel":
+            return
         try:
             rpc.db_exec(host, int(port), 'drop', passwd, dbname)
         except Exception, exception:
             self.refresh_ssl()
-            common.warning(_('Database drop failed with '\
-                    'error message:\n') + str(exception[0]), self.window,
-                    _('Database drop failed!'))
+            if exception[0] == "AccessDenied":
+                common.warning(_("Wrong Tryton Server Password" \
+                        "\nPlease try again."), self.window,
+                        _('Access denied!'))
+                self.sig_db_drop(self.window)
+            else:
+                common.warning(_('Database drop failed with ' \
+                        'error message:\n') + str(exception[0]), \
+                        self.window, _('Database drop failed!'))
             return
         self.refresh_ssl()
-        common.message(_("Database dropped successfully!"),
+        common.message(_("Database dropped successfully!"), \
                 parent=self.window)
 
     def sig_db_restore(self, widget):
-        filename = common.file_selection(_('Open...'), parent=self.window,
-                preview=False)
+        filename = common.file_selection(_('Open Backup File to Restore...'), \
+                parent=self.window, preview=False)
         if not filename:
             rpc.logout()
             Main.get_main().refresh_ssl()
             return
-
-        url, dbname, passwd = self._choose_db_ent()
+        dialog = DBRestore(self.window, filename=filename)
+        url, dbname, passwd = dialog.run(self.window)
         if dbname:
             file_p = file(filename, 'rb')
             data_b64 = base64.encodestring(file_p.read())
             file_p.close()
             host, port = url.rsplit(':' , 1)
             try:
-                res = rpc.db_exec(host, int(port), 'restore', passwd, dbname,
+                res = rpc.db_exec(host, int(port), 'restore', passwd, dbname, \
                         data_b64)
             except Exception, exception:
                 self.refresh_ssl()
-                common.warning(_('Database restore failed with ' \
-                        'error message:\n') + str(exception[0]), self.window,
-                        _('Database restore failed!'))
+                if exception[0] == \
+                        "Couldn't restore database with password":
+                    common.warning(_("It is not possible to restore a " \
+                            "password protected database.\n" \
+                            "Backup and restore needed to be proceed " \
+                            "manual."), self.window, \
+                            _('Database is password protected!'))
+                elif exception[0] == "AccessDenied":
+                    common.warning(_("Wrong Tryton Server Password.\n" \
+                            "Please try again."), self.window, \
+                            _('Access denied!'))
+                    self.sig_db_restore(self.window)
+                else:
+                    common.warning(_('Database restore failed with ' \
+                            'error message:\n') + str(exception[0]), \
+                            self.window, _('Database restore failed!'))
                 return
             self.refresh_ssl()
             if res:
-                common.message(_("Database restored successfully!"),
+                common.message(_("Database restored successfully!"), \
                         parent=self.window)
             else:
-                common.message(_('Database restore failed!'),
+                common.message(_('Database restore failed!'), \
                         parent=self.window)
         else:
             rpc.logout()
             Main.get_main().refresh_ssl()
-
-    def sig_db_password(self, widget):
-        dialog = glade.XML(GLADE, "dia_passwd_change",
-                gettext.textdomain())
-        win = dialog.get_widget('dia_passwd_change')
-        win.set_icon(TRYTON_ICON)
-        win.set_transient_for(self.window)
-        win.show_all()
-        server_widget = dialog.get_widget('ent_server')
-        old_pass_widget = dialog.get_widget('old_passwd')
-        new_pass_widget = dialog.get_widget('new_passwd')
-        new_pass2_widget = dialog.get_widget('new_passwd2')
-        change_button = dialog.get_widget('but_server_change')
-        change_button.connect_after('clicked', \
-                lambda a,b: common.request_server(b, win), server_widget)
-
-        host = CONFIG['login.server']
-        port = int(CONFIG['login.port'])
-        url = '%s:%d' % (host, port)
-        server_widget.set_text(url)
-
-        res = win.run()
-        if res == gtk.RESPONSE_OK:
-            url = server_widget.get_text()
-            old_passwd = old_pass_widget.get_text()
-            new_passwd = new_pass_widget.get_text()
-            new_passwd2 = new_pass2_widget.get_text()
-            if new_passwd != new_passwd2:
-                common.warning(_("Confirmation password do not match " \
-                        "new password, operation cancelled!"), win,
-                        _("Validation Error."))
-            else:
-                try:
-                    rpc.db_exec(host, port, 'change_admin_password',
-                            old_passwd, new_passwd)
-                except Exception, exception:
-                    rpc.logout()
-                    common.warning(_('Change Admin password failed with ' \
-                            'error message:\n') + str(exception[0]),
-                            self.window, _('Change Admin password failed!'))
-                self.refresh_ssl()
-        else:
-            rpc.logout()
-            Main.get_main().refresh_ssl()
-        self.window.present()
-        win.destroy()
 
     def sig_db_dump(self, widget):
-        url, dbname, passwd = self._choose_db_select(_('Backup a database'))
-        if not dbname:
+        dialog = DBBackupDrop(self.window, function='backup')
+        url, dbname, passwd = dialog.run(self.window)
+
+        if not (dbname and url and passwd):
             rpc.logout()
             Main.get_main().refresh_ssl()
             return
@@ -1384,134 +1379,37 @@ class Main(object):
         try:
             dump_b64 = rpc.db_exec(host, int(port), 'dump', passwd, dbname)
         except Exception, exception:
+            if exception[0] == "Couldn't dump database with password":
+                common.warning(_("It is not possible to dump a password " \
+                        "protected Database.\nBackup and restore " \
+                        "needed to be proceed manual."),
+                        self.window, _('Database is password protected!'))
+            elif exception[0] == "AccessDenied":
+                common.warning(_("Wrong Tryton Server Password.\n" \
+                        "Please try again."), self.window,
+                        _('Access denied!'))
+                self.sig_db_dump(self.window)
+            else:
+                common.warning(_('Database dump failed with ' \
+                        'error message:\n') + str(exception[0]), \
+                        self.window, _('Database dump failed!'))
             rpc.logout()
             Main.get_main().refresh_ssl()
-            common.warning(_('Database dump failed with error message:\n') + \
-                    str(exception[0]), self.window, _('Database dump failed!'))
             return
+
         self.refresh_ssl()
         dump = base64.decodestring(dump_b64)
 
-        filename = common.file_selection(_('Save As...'),
-                action=gtk.FILE_CHOOSER_ACTION_SAVE, parent=self.window,
+        filename = common.file_selection(_('Save As...'), \
+                action=gtk.FILE_CHOOSER_ACTION_SAVE, parent=self.window, \
                 preview=False)
 
         if filename:
             file_ = file(filename, 'wb')
             file_.write(dump)
             file_.close()
-            common.message(_("Database backuped successfully!"),
+            common.message(_("Database backuped successfully!"), \
                     parent=self.window)
         else:
             rpc.logout()
             Main.get_main().refresh_ssl()
-
-    def _choose_db_select(self, title=_("Backup a database")):
-        def refreshlist(widget, db_widget, label, host, port):
-            res = common.refresh_dblist(db_widget, host, port)
-            if res is None or res == -1:
-                if res is None:
-                    label.set_label('<b>' + _('Could not connect to server!') +\
-                            '</b>')
-                else:
-                    label.set_label('<b>' + \
-                            _('Incompatible version of the server!') + '</b>')
-                db_widget.hide()
-                label.show()
-            elif res == 0:
-                label.set_label('<b>' + \
-                        _('No database found, you must create one!') + '</b>')
-                db_widget.hide()
-                label.show()
-            else:
-                label.hide()
-                db_widget.show()
-            return res
-
-        def refreshlist_ask(widget, server_widget, db_widget, label,
-                parent=None):
-            res = common.request_server(server_widget, parent)
-            if not res:
-                return None
-            host, port = res
-            refreshlist(widget, db_widget, label, host, port)
-            return (host, port)
-
-        dialog = glade.XML(GLADE, "win_db_select",
-                gettext.textdomain())
-        win = dialog.get_widget('win_db_select')
-        win.set_icon(TRYTON_ICON)
-        win.set_default_response(gtk.RESPONSE_OK)
-        win.set_transient_for(self.window)
-        win.show_all()
-
-        pass_widget = dialog.get_widget('ent_passwd_select')
-        server_widget = dialog.get_widget('ent_server_select')
-        db_widget = dialog.get_widget('combo_db_select')
-        label = dialog.get_widget('label_db_select')
-
-
-        dialog.get_widget('db_select_label').set_markup('<b>'+title+'</b>')
-
-        host = CONFIG['login.server']
-        port = int(CONFIG['login.port'])
-        url = '%s:%d' % (host, port)
-        server_widget.set_text(url)
-
-        liststore = gtk.ListStore(str)
-        db_widget.set_model(liststore)
-
-        refreshlist(None, db_widget, label, host, port)
-        change_button = dialog.get_widget('but_server_select')
-        change_button.connect_after('clicked', refreshlist_ask,
-                server_widget, db_widget, label, win)
-
-        cell = gtk.CellRendererText()
-        db_widget.pack_start(cell, True)
-        db_widget.add_attribute(cell, 'text', 0)
-
-        res = win.run()
-
-        database = False
-        url = False
-        passwd = False
-        if res == gtk.RESPONSE_OK:
-            database = db_widget.get_active_text()
-            url = server_widget.get_text()
-            passwd = pass_widget.get_text()
-        self.window.present()
-        win.destroy()
-        return (url, database, passwd)
-
-    def _choose_db_ent(self):
-        dialog = glade.XML(GLADE, "win_db_ent",
-                gettext.textdomain())
-        win = dialog.get_widget('win_db_ent')
-        win.set_icon(TRYTON_ICON)
-        win.set_transient_for(self.window)
-        win.show_all()
-
-        db_widget = dialog.get_widget('ent_db')
-        widget_pass = dialog.get_widget('ent_password')
-        widget_url = dialog.get_widget('ent_server')
-
-        url = '%s:%d' % (CONFIG['login.server'], int(CONFIG['login.port']))
-        widget_url.set_text(url)
-
-        change_button = dialog.get_widget('but_server_change')
-        change_button.connect_after('clicked',
-                lambda a, b: common.request_server(b, win), widget_url)
-
-        res = win.run()
-
-        database = False
-        passwd = False
-        url = False
-        if res == gtk.RESPONSE_OK:
-            database = db_widget.get_text()
-            url = widget_url.get_text()
-            passwd = widget_pass.get_text()
-        self.window.present()
-        win.destroy()
-        return url, database, passwd
-

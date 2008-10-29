@@ -1,13 +1,13 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 import gtk
-from gtk import glade
 import gobject
 import gettext
 import os
 import re
 import logging
 from tryton.config import CONFIG
-from tryton.config import GLADE, TRYTON_ICON, PIXMAPS_DIR, DATA_DIR
+from tryton.config import TRYTON_ICON, PIXMAPS_DIR, DATA_DIR
 import time
 import sys
 import xmlrpclib
@@ -225,6 +225,7 @@ def file_selection(title, filename='', parent=None,
 
     button = win.run()
     if button != gtk.RESPONSE_OK:
+        parent.present()
         win.destroy()
         return False
     if not multi:
@@ -264,7 +265,8 @@ def file_open(filename, type, parent, print_p=False):
             # Try without operation, it is not supported on version < 2.5
             os.startfile(os.path.normpath(filename))
         return
-    elif os.name == 'mac' or os.uname()[0] == 'Darwin':
+    elif os.name == 'mac' or \
+            (hasattr(os, 'uname') and os.uname()[0] == 'Darwin'):
         pid = os.fork()
         if not pid:
             pid = os.fork()
@@ -352,6 +354,8 @@ def error(title, parent, details):
     buf = gtk.TextBuffer()
     buf.set_text(details)
     textview.set_buffer(buf)
+    textview.set_editable(False)
+    textview.set_sensitive(True)
     box.pack_start(textview, False, False)
 
     viewport.add(box)
@@ -425,8 +429,11 @@ def send_bugtracker(msg, parent):
 
     win.vbox.pack_start(hbox)
     win.show_all()
-    entry_password.grab_focus()
-    entry_user.set_text(rpc._USERNAME)
+    if rpc._USERNAME:
+        entry_user.set_text(rpc._USERNAME)
+        entry_password.grab_focus()
+    else:
+        entry_user.grab_focus()
 
     response = win.run()
     parent.present()
@@ -517,7 +524,6 @@ def sur(msg, parent):
             | gtk.gdk.WINDOW_TYPE_HINT_DIALOG)
     dialog.set_icon(TRYTON_ICON)
     dialog.set_has_separator(True)
-    dialog.set_size_request(350, 150)
     hbox = gtk.HBox()
     image = gtk.Image()
     image.set_from_stock('tryton-dialog-information',
@@ -525,7 +531,6 @@ def sur(msg, parent):
     image.set_padding(15, 15)
     hbox.pack_start(image, False, False)
     label = gtk.Label('%s' % (to_xml(msg)))
-    label.set_size_request(200, 60)
     hbox.pack_start(label, True, True)
     dialog.vbox.pack_start(hbox)
     dialog.add_button("gtk-cancel", gtk.RESPONSE_CANCEL)
@@ -545,7 +550,6 @@ def sur_3b(msg, parent):
             | gtk.gdk.WINDOW_TYPE_HINT_DIALOG)
     dialog.set_icon(TRYTON_ICON)
     dialog.set_has_separator(True)
-    dialog.set_size_request(350, 150)
     hbox = gtk.HBox()
     image = gtk.Image()
     image.set_from_stock('tryton-dialog-information',
@@ -553,7 +557,6 @@ def sur_3b(msg, parent):
     image.set_padding(15, 15)
     hbox.pack_start(image, False, False)
     label = gtk.Label('%s' % (to_xml(msg)))
-    label.set_size_request(200, 60)
     hbox.pack_start(label, True, True)
     dialog.vbox.pack_start(hbox)
     dialog.add_button("gtk-cancel", gtk.RESPONSE_CANCEL)

@@ -1,10 +1,11 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 import gtk
 import gobject
 import gettext
 import re
 import tryton.common as common
-from tryton.config import CONFIG, GLADE, TRYTON_ICON, PIXMAPS_DIR
+from tryton.config import CONFIG, TRYTON_ICON, PIXMAPS_DIR
 import tryton.rpc as rpc
 
 _ = gettext.gettext
@@ -130,7 +131,7 @@ class DBCreate(object):
             gobject.idle_add(_move_cursor, entry, _pos)
         entry.stop_emission("insert-text")
 
-    def __init__(self, sig_login):
+    def __init__(self, sig_login=None):
         """
         This method defines the complete GUI.
         """
@@ -260,7 +261,7 @@ class DBCreate(object):
         self.entry_adminpasswd.set_activates_default(True)
         self.tooltips.set_tip(self.entry_adminpasswd, _("Choose a password for " \
             "the admin user of the new database. With these credentials you " \
-            "are later able to login into the database:\n" \
+            "will be later able to login into the database:\n" \
             "User name: admin\n" \
             "Password: <The password you set here>"), None)
         table.attach(self.entry_adminpasswd, 1, 3, 7, 8)
@@ -329,11 +330,10 @@ class DBCreate(object):
                         _('Wrong characters in database name!'))
                     continue
                 elif admin_passwd.get_text() != admin_passwd2.get_text():
-                    common.warning(_("The new admin password " \
-                        "doesn't match to the retyped password.\n" \
-                        "Try to type the same passwords in the " \
-                        "admin password and the confirm admin password " \
-                        "fields again."), parent, \
+                    common.warning(
+                        _("The new admin password " \
+                              "doesn't match the confirmation field.\n"),
+                        parent,
                         _("Passwords doesn't match!"))
                     continue
                 elif not admin_passwd.get_text():
@@ -349,10 +349,10 @@ class DBCreate(object):
                         and admin_passwd.get_text():
                     if rpc.db_exec(url_m.group(1), int(url_m.group(2)),
                              'db_exist', dbname):
-                         common.warning(_("Database with the same name " \
+                         common.warning(_("A database with the same name " \
                              "already exists.\n" \
                              "Try another database name."), parent,
-                             _("Databasename already exist!"))
+                             _("This database name already exist!"))
                          self.entry_dbname.set_text("")
                          self.entry_dbname.grab_focus()
                          continue
@@ -369,8 +369,8 @@ class DBCreate(object):
                             rpcprogress.run()
                         except Exception, exception:
                             if str(exception[0]) == "AccessDenied":
-                                common.warning(_("Sorry, the Tryton server " \
-                                    "password seems wrong. Please type again.") \
+                                common.warning(_("Sorry, wrong password for " \
+                                    "the Tryton server. Please try again.") \
                                     , parent, _("Access denied!"))
                                 self.entry_serverpasswd.set_text("")
                                 self.entry_serverpasswd.grab_focus()
@@ -394,7 +394,8 @@ class DBCreate(object):
                         Main.get_main().refresh_ssl()
                         parent.present()
                         self.dialog.destroy()
-                        self.sig_login(dbname=dbname)
+                        if self.sig_login:
+                            self.sig_login(dbname=dbname)
                         break
 
             break

@@ -7,6 +7,7 @@ from tryton.action import Action
 from tryton.gui.window.view_form.view.interface import ParserInterface
 import tryton.common as common
 from tryton.config import CONFIG, TRYTON_ICON
+from tryton.gui.main import Main
 
 _ = gettext.gettext
 
@@ -42,9 +43,11 @@ class Button(object):
             if not self.attrs.get('confirm', False) or \
                     common.sur(self.attrs['confirm'], self.form.window):
                 button_type = self.attrs.get('type', 'workflow')
+                ctx = rpc.CONTEXT.copy()
+                ctx.update(model.context_get())
                 if button_type == 'workflow':
                     args = ('object', 'exec_workflow', self.form.screen.name,
-                            self.attrs['name'], obj_id)
+                            self.attrs['name'], obj_id, ctx)
                     try:
                         rpc.execute(*args)
                     except Exception, exception:
@@ -52,7 +55,7 @@ class Button(object):
                                 *args)
                 elif button_type == 'object':
                     args = ('object', 'execute', self.form.screen.name,
-                            self.attrs['name'], [obj_id], model.context_get())
+                            self.attrs['name'], [obj_id], ctx)
                     try:
                         rpc.execute(*args)
                     except Exception, exception:
@@ -61,7 +64,7 @@ class Button(object):
                 elif button_type == 'action':
                     action_id = None
                     args = ('object', 'execute', 'ir.action', 'get_action_id',
-                            int(self.attrs['name']), rpc.CONTEXT)
+                            int(self.attrs['name']), ctx)
                     try:
                         action_id = rpc.execute(*args)
                     except Exception, exception:
@@ -72,7 +75,7 @@ class Button(object):
                             'model': self.form.screen.name,
                             'id': obj_id,
                             'ids': [obj_id],
-                            }, self.form.window)
+                            }, self.form.window, context=ctx)
                 else:
                     raise Exception('Unallowed button type')
                 self.form.screen.reload()
@@ -444,11 +447,13 @@ class ParserForm(ParserInterface):
                         self.parse(model, node, fields, notebook,
                                 tooltips=tooltips)
                 max_width, max_height = -1, -1
+                window_width, window_height = Main.get_main().window.get_size()
                 for i in range(notebook.get_n_pages()):
-                    width, height = notebook.get_nth_page(i).size_request()
-                    if width > max_width:
+                    width, height = notebook.get_nth_page(i)\
+                            .get_child().get_child().size_request()
+                    if width > max_width and width < window_width - 50:
                         max_width = width
-                    if height > max_height:
+                    if height > max_height and height < window_height - 50:
                         max_height = height
                 notebook.set_size_request(max_width + 20, max_height + 20)
                 if not cursor_widget:
@@ -475,6 +480,7 @@ class ParserForm(ParserInterface):
                     text = _('No String Attr.')
                 label = gtk.Label(text)
                 label.set_angle(angle)
+                label.set_use_underline(True)
                 widget, widgets, buttons, on_write, notebook_list2, cursor_widget2 = \
                         self.parse(model, node, fields, notebook,
                                 tooltips=tooltips)
@@ -834,6 +840,7 @@ WIDGETS_TYPE = {
     'float': (Float, 1, False, False),
     'numeric': (Float, 1, False, False),
     'integer': (Integer, 1, False, False),
+    'biginteger': (Integer, 1, False, False),
     'selection': (Selection, 1, False, False),
     'char': (Char, 1, False, False),
     'sha': (Sha, 1, False, False),

@@ -7,7 +7,6 @@ from tryton.gui.window.view_tree import ViewTree, ViewTreeSC
 import tryton.rpc as rpc
 from tryton.config import CONFIG
 from tryton.gui.window.win_export import WinExport
-from tryton.config import GLADE
 from window import Window
 from tryton.action import Action
 from tryton.signal_event import SignalEvent
@@ -53,7 +52,7 @@ class Tree(SignalEvent):
         self.widget = gtk.VBox()
 
         hpaned = gtk.HPaned()
-        hpaned.set_position(200)
+        hpaned.set_position(220)
 
         self.toolbar_vpaned = gtk.VPaned()
         self.toolbar_vpaned.set_position(400)
@@ -286,6 +285,8 @@ class Tree(SignalEvent):
                 self.tree_res.view.collapse_row(iter)
             else:
                 self.tree_res.view.expand_row(iter, False)
+            if self.model != 'ir.ui.menu':
+                self.sig_edit()
 
     def sig_key_press(self, widget, event):
         if event.keyval == gtk.keysyms.Left:
@@ -340,16 +341,18 @@ class Tree(SignalEvent):
 
     def sig_edit(self):
         obj_ids = self.ids_get()
+        if not obj_ids:
+            obj_ids = []
         if self.tree_res.toolbar:
             for child in self.toolbar.get_children():
                 if child.get_active():
                     obj_ids.append(child.get_data('id'))
-        if obj_ids:
-            Window.create(None, self.model, obj_ids, self.domain,
-                    window=self.window, context=self.context,
-                    mode=['form', 'tree'])
-        else:
-            common.message(_('No record selected!'), self.window)
+        mode = ['form', 'tree']
+        if len(obj_ids) > 1:
+            mode = ['tree', 'form']
+        Window.create(None, self.model, obj_ids, self.domain,
+                window=self.window, context=self.context,
+                mode=mode)
 
     def sc_del(self, widget):
         obj_id = self.tree_sc.sel_id_get()

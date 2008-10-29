@@ -30,6 +30,13 @@ except ImportError:
 
 if os.name == 'nt':
     import py2exe
+    origIsSystemDLL = py2exe.build_exe.isSystemDLL
+    def isSystemDLL(pathname):
+        if os.path.basename(pathname).lower() in ("msvcp71.dll", "dwmapi.dll"):
+            return 0
+        return origIsSystemDLL(pathname)
+    py2exe.build_exe.isSystemDLL = isSystemDLL
+
     args['windows'] = [{
         'script': os.path.join('bin', 'tryton'),
     }]
@@ -73,8 +80,6 @@ setup(name=PACKAGE,
     data_files=[
         ('share/pixmaps', glob.glob('share/pixmaps/*.png') + \
                 glob.glob('share/pixmaps/*.svg')),
-        ('share/tryton', glob.glob('share/tryton/tryton.glade') + \
-                glob.glob('share/tryton/tipoftheday.txt')),
         ('share/locale/fr_FR/LC_MESSAGES', glob.glob('share/locale/fr_FR/LC_MESSAGES/*.mo')),
         ('share/locale/de_DE/LC_MESSAGES', glob.glob('share/locale/de_DE/LC_MESSAGES/*.mo')),
     ],
@@ -85,6 +90,10 @@ setup(name=PACKAGE,
         'Intended Audience :: End Users/Desktop',
         'License :: OSI Approved :: GNU General Public License Version 2 (GPL-2)',
         'Operating System :: OS Independent',
+        'Natural Language :: English',
+        'Natural Language :: French',
+        'Natural Language :: German',
+        'Natural Language :: Spanish',
         'Programming Language :: Python',
         'Topic :: Office/Business',
     ],
