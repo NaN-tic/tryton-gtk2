@@ -388,6 +388,14 @@ class M2MField(CharField):
     def get_default(self, model):
         return self.get_client(model)
 
+    def name_get(self, model):
+        rpc2 = RPCProxy(self.attrs['relation'])
+        try:
+            result = rpc2.name_get(self.get_client(model), rpc.CONTEXT)
+        except:
+            return self.get_client(model)
+        return ', '.join(dict(result).values())
+
 
 class O2MField(CharField):
     '''
@@ -517,7 +525,8 @@ class O2MField(CharField):
 
         mod = None
         if value and value.get('add') or value.get('update', []):
-            model.value[self.name].add_fields(fields, model.value[self.name])
+            model.value[self.name].add_fields(fields, model.value[self.name],
+                    signal=False)
             for record in value.get('add', []):
                 mod = model.value[self.name].model_new(default=False)
                 model.value[self.name].model_add(mod)

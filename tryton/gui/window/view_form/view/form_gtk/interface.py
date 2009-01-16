@@ -3,7 +3,7 @@
 import gtk
 from tryton.rpc import RPCProxy
 import tryton.rpc as rpc
-from tryton.common import COLORS, process_exception
+from tryton.common import COLORS, process_exception, message
 from tryton.config import TRYTON_ICON
 from tryton.gui.window.view_form.view.form_gtk.preference \
         import WidgetFieldPreference
@@ -16,16 +16,15 @@ _ATTRS_BOOLEAN = {
     'readonly': False
 }
 
-def field_pref_set(field, name, model, value, dependance=None, window=None):
+def field_pref_set(field, name, model, value, client_value, dependance=None,
+        window=None):
     dialog = WidgetFieldPreference(window)
     if dependance is None:
         dependance = []
     entry = dialog.entry_field_name
     entry.set_text(name)
-    entry = dialog.entry_domain
-    entry.set_text(model)
     entry = dialog.entry_default_value
-    entry.set_text((value and str(value)) or _('<empty>'))
+    entry.set_text((client_value and str(client_value)) or _('<empty>'))
 
     radio = dialog.radio_current_user
 
@@ -96,6 +95,7 @@ class WidgetInterface(object):
         self.fg_color_normal = None
         self.fg_color_insensitive = None
         self.text_color_normal = None
+        self.visible = True
 
     def destroy(self):
         pass
@@ -174,8 +174,10 @@ class WidgetInterface(object):
     def invisible_set(self, value):
         widget = self._invisible_widget()
         if value and value != '0':
+            self.visible = False
             widget.hide()
         else:
+            self.visible = True
             widget.show()
 
     def _menu_sig_default_set(self):
@@ -187,11 +189,18 @@ class WidgetInterface(object):
                     name = wview.modelfield.attrs.get('string', wname)
                     value = wview.modelfield.get_client(self._view.model)
                     deps.append((wname, name, wvalue, value))
+        if not self._view.modelfield.validate(self._view.model):
+            message(_('Invalid field!'), parent=self._window)
+            return
         value = self._view.modelfield.get_default(self._view.model)
+        client_value = self.display_value()
         model = self._view.modelfield.parent.resource
         field_pref_set(self._view.widget_name,
                 self.attrs.get('string', self._view.widget_name), model,
-                value, deps, window=self._window)
+                value, client_value, deps, window=self._window)
+
+    def display_value(self):
+        return self._view.modelfield.get_client(self._view.model)
 
     def _menu_open(self, obj, event):
         if event.button == 3:
@@ -230,6 +239,8 @@ class WidgetInterface(object):
 
     def _focus_out(self):
         if not self._view.modelfield:
+            return False
+        if not self.visible:
             return False
         self.set_value(self._view.model, self._view.modelfield)
 

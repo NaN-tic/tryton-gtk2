@@ -1,9 +1,10 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 import time
 import datetime
 import tryton.rpc as rpc
 from tryton.wizard import Wizard
-from tryton.common import message, error, selection, file_open
+from tryton.common import message, error, selection, file_open, mailto
 from tryton.gui.window import Window
 import gettext
 import tempfile
@@ -17,9 +18,12 @@ _ = gettext.gettext
 class Action(object):
 
     @staticmethod
-    def exec_report(name, data, window, context=None):
+    def exec_report(name, data, window, direct_print=False, email_print=False,
+            email=None, context=None):
         if context is None:
             context = {}
+        if email is None:
+            email = {}
         datas = data.copy()
         ids = datas['ids']
         del datas['ids']
@@ -48,11 +52,18 @@ class Action(object):
         if not res:
             return False
         (type, data, print_p) = res
+        if not print_p and direct_print:
+            print_p = True
         (fileno, fp_name) = tempfile.mkstemp('.' + type, 'tryton_')
         file_d = os.fdopen(fileno, 'wb+')
         file_d.write(base64.decodestring(data))
         file_d.close()
-        file_open(fp_name, type, window, print_p=print_p)
+        if email_print:
+            mailto(to=email.get('to'), cc=email.get('cc'),
+                    subject=email.get('subject'), body=email.get('body'),
+                    attachment=fp_name)
+        else:
+            file_open(fp_name, type, window, print_p=print_p)
         return True
 
     @staticmethod
@@ -145,10 +156,15 @@ class Action(object):
                     search_value=search_value)
         elif action['type'] == 'ir.action.wizard':
             Wizard.execute(action['wiz_name'], datas, window,
-                    context=context)
+                    direct_print=action.get('direct_print', False),
+                    email_print=action.get('email_print', False),
+                    email=action.get('email'), context=context)
 
         elif action['type'] == 'ir.action.report':
-            Action.exec_report(action['report_name'], datas, window)
+            Action.exec_report(action['report_name'], datas, window,
+                    direct_print=action.get('direct_print', False),
+                    email_print=action.get('email_print', False),
+                    email=action.get('email'), context=context)
 
         elif action['type'] == 'ir.action.url':
             if action['url']:

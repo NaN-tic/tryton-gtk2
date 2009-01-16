@@ -18,6 +18,8 @@ if os.name == 'nt':
 import pygtk
 pygtk.require('2.0')
 import gtk
+if os.name != 'nt':
+    gtk.gdk.threads_init()
 import logging
 
 import version
@@ -80,7 +82,8 @@ class TrytonClient(object):
 
         signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
         signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-        signal.signal(signal.SIGQUIT, lambda signum, frame: sys.exit(0))
+        if hasattr(signal, 'SIGQUIT'):
+            signal.signal(signal.SIGQUIT, lambda signum, frame: sys.exit(0))
 
         def excepthook(exctyp, value, tb):
             import common

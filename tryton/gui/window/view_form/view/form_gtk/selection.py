@@ -130,11 +130,14 @@ class Selection(WidgetInterface):
         else:
             found = False
             for long_text, sel_value in self._selection.items():
-                if sel_value == value:
+                if str(sel_value) == str(value):
                     child.set_text(long_text)
                     found = True
                     break
         self.changed = True
+
+    def display_value(self):
+        return self.entry.get_child().get_text()
 
     def sig_changed(self, *args):
         if self.changed:
