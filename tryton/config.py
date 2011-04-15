@@ -52,6 +52,7 @@ class ConfigManager(object):
             'login.server': 'localhost',
             'login.port': '8070',
             'login.db': False,
+            'login.expanded': False,
             'tip.autostart': False,
             'tip.position': 0,
             'logging.logger': '',
@@ -86,6 +87,7 @@ class ConfigManager(object):
             'client.limit': 1000,
             'roundup.url': 'http://bugs.tryton.org/roundup/',
             'roundup.xmlrpc': 'roundup-xmlrpc.tryton.org',
+            'menu.pane': 200,
         }
         self.config = {}
         self.options = {
@@ -174,8 +176,13 @@ class ConfigManager(object):
             self.defaults.get(key)))
 
 CONFIG = ConfigManager()
-CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..')))
+if os.name == 'nt' and hasattr(sys, 'frozen'):
+    CURRENT_DIR = os.path.dirname(unicode(sys.executable,
+        sys.getfilesystemencoding()))
+else:
+    CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
+        unicode(os.path.dirname(__file__), sys.getfilesystemencoding()),
+        '..')))
 PREFIX = os.path.abspath(os.path.normpath(os.path.join(
     os.path.dirname(sys.argv[0]), '..')))
 PIXMAPS_DIR = os.path.join(CURRENT_DIR, 'share', 'pixmaps', 'tryton')
@@ -187,7 +194,7 @@ if not os.path.isdir(PIXMAPS_DIR):
         PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
 
 TRYTON_ICON = gtk.gdk.pixbuf_new_from_file(
-        os.path.join(PIXMAPS_DIR, 'tryton-icon.png'))
+        os.path.join(PIXMAPS_DIR, 'tryton-icon.png').encode('utf-8'))
 
 def _data_dir():
     data_dir = os.path.join(CURRENT_DIR, 'share', 'tryton')

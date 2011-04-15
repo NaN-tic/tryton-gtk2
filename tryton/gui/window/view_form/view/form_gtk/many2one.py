@@ -68,41 +68,8 @@ class Many2One(WidgetInterface):
 
         self._readonly = False
 
-        self.completion = gtk.EntryCompletion()
-        self.liststore = gtk.ListStore(gobject.TYPE_STRING, gobject.TYPE_STRING)
-        if attrs.get('completion', False):
-            try:
-                result = rpc.execute('model', self.attrs['relation'],
-                        'search_read', [], 0, None, None, ['rec_name'],
-                        rpc.CONTEXT)
-                names = [(x['id'], x['rec_name']) for x in result]
-            except Exception, exception:
-                common.process_exception(exception, self.window)
-                names = []
-            if names:
-                self.load_completion(names)
-
     def grab_focus(self):
         return self.wid_text.grab_focus()
-
-    def load_completion(self, names):
-        self.completion.set_match_func(self.match_func, None)
-        self.completion.connect("match-selected", self.on_completion_match)
-        self.wid_text.set_completion(self.completion)
-        self.completion.set_model(self.liststore)
-        self.completion.set_text_column(1)
-        for object_id, name in names:
-            self.liststore.append([object_id, name])
-
-    def match_func(self, completion, key_string, iter, data):
-        model = self.completion.get_model()
-        modelstr = model[iter][1].lower()
-        return modelstr.startswith(key_string)
-
-    def on_completion_match(self, completion, model, iter):
-        self.field.set_client(self.record, int(model[iter][0]))
-        self.display(self.record, self.field)
-        return True
 
     def _readonly_set(self, value):
         self._readonly = value
@@ -180,21 +147,18 @@ class Many2One(WidgetInterface):
         domain = self.field.domain_get(self.record)
         context = self.field.context_get(self.record)
         return Screen(self.attrs['relation'], self.window, domain=domain,
-                context=context, view_type=['form'],
+                context=context, mode=['form'],
                 views_preload=self.attrs.get('views', {}))
 
     def sig_new(self, *args):
         self.focus_out = False
         screen = self.get_screen()
         win = WinForm(screen, self.window, new=True)
-        while win.run():
+        if win.run():
             if screen.save_current():
                 value = (screen.current_record.id,
                         screen.current_record.rec_name())
                 self.field.set_client(self.record, value)
-                break
-            else:
-                screen.display()
         win.destroy()
         self.focus_out = True
 
@@ -310,7 +274,6 @@ class Many2One(WidgetInterface):
                 return False
         menu_entries = []
         menu_entries.append((None, None, None))
-        menu_entries += self._menu_entries
         menu_entries.append((None, None, None))
         menu_entries.append((_('Actions'),
             lambda x: self.click_and_action('form_action'),0))

@@ -36,7 +36,6 @@ class Reference(WidgetInterface):
         self.wid_text = gtk.Entry()
         self.wid_text.set_property('width-chars', 13)
         self.wid_text.connect('key_press_event', self.sig_key_press)
-        self.wid_text.connect('populate-popup', self._populate_popup)
         self.wid_text.connect_after('changed', self.sig_changed)
         self.changed = True
         self.wid_text.connect_after('activate', self.sig_activate)
@@ -154,18 +153,15 @@ class Reference(WidgetInterface):
                 return False
         if model and obj_id:
             if not leave:
-                screen = Screen(model, self.window, view_type=['form'])
+                screen = Screen(model, self.window, mode=['form'])
                 screen.load([obj_id])
                 win = WinForm(screen, self.window)
-                while win.run():
+                if win.run():
                     if screen.save_current():
                         value = (screen.current_record.id,
                                 screen.current_record.rec_name())
                         self.field.set_client(self.record, (model, value),
                                 force_change=True)
-                        break
-                    else:
-                        screen.display()
                 win.destroy()
         elif model:
             if not self._readonly and ( self.wid_text.get_text() or not leave):
@@ -208,16 +204,13 @@ class Reference(WidgetInterface):
         model = self.get_model()
         if not model:
             return
-        screen = Screen(model, self.window, view_type=['form'])
+        screen = Screen(model, self.window, mode=['form'])
         win = WinForm(screen, self.window, new=True)
-        while win.run():
+        if win.run():
             if screen.save_current():
                 value = (screen.current_record.id,
                         screen.current_record.rec_name())
                 self.field.set_client(self.record, (model, value))
-                break
-            else:
-                screen.display()
         win.destroy()
 
     def sig_key_press(self, widget, event):

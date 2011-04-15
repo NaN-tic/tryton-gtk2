@@ -21,35 +21,17 @@ class One2Many(WidgetInterface):
         super(One2Many, self).__init__(field_name, model_name, window,
                 attrs=attrs)
 
-        self.widget = gtk.VBox(homogeneous=False, spacing=5)
+        self.widget = gtk.VBox(homogeneous=False, spacing=2)
         self._readonly = True
 
         hbox = gtk.HBox(homogeneous=False, spacing=0)
-        menubar = gtk.MenuBar()
-        if hasattr(menubar, 'set_pack_direction') and \
-                hasattr(menubar, 'set_child_pack_direction'):
-            menubar.set_pack_direction(gtk.PACK_DIRECTION_LTR)
-            menubar.set_child_pack_direction(gtk.PACK_DIRECTION_LTR)
+        hbox.set_border_width(2)
 
-        menuitem_title = gtk.ImageMenuItem(stock_id='tryton-preferences')
+        label = gtk.Label(attrs.get('string', ''))
+        label.set_alignment(0.0, 0.5)
+        hbox.pack_start(label, expand=True, fill=True)
 
-        menu_title = gtk.Menu()
-        menuitem_set_to_default = gtk.MenuItem(_('Set to default value'), True)
-        menuitem_set_to_default.connect('activate',
-                lambda *x: self._menu_sig_default_get())
-        menu_title.add(menuitem_set_to_default)
-        menuitem_set_default = gtk.MenuItem(_('Set as default'), True)
-        menuitem_set_default.connect('activate',
-                lambda *x: self._menu_sig_default_set())
-        menu_title.add(menuitem_set_default)
-        menuitem_reset_default = gtk.MenuItem(_('Reset default'), True)
-        menuitem_reset_default.connect('activate',
-                lambda *x: self._menu_sig_default_set(reset=True))
-        menu_title.add(menuitem_reset_default)
-        menuitem_title.set_submenu(menu_title)
-
-        menubar.add(menuitem_title)
-        hbox.pack_start(menubar, expand=True, fill=True)
+        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
 
         tooltips = common.Tooltips()
 
@@ -166,15 +148,17 @@ class One2Many(WidgetInterface):
 
         tooltips.enable()
 
-        self.widget.pack_start(hbox, expand=False, fill=True)
+        frame = gtk.Frame()
+        frame.add(hbox)
+        frame.set_shadow_type(gtk.SHADOW_OUT)
+        self.widget.pack_start(frame, expand=False, fill=True)
 
         self.screen = Screen(attrs['relation'], self.window,
-                view_type=attrs.get('mode', 'tree,form').split(','),
+                mode=attrs.get('mode', 'tree,form').split(','),
                 views_preload=attrs.get('views', {}),
                 row_activate=self._on_activate,
                 exclude_field=attrs.get('relation_field', None))
         self.screen.signal_connect(self, 'record-message', self._sig_label)
-        menuitem_title.get_child().set_text(attrs.get('string', ''))
 
         if not isinstance(self.screen.window, gtk.Dialog):
             self.screen.widget.set_size_request(0, 0)
@@ -232,6 +216,7 @@ class One2Many(WidgetInterface):
         self._readonly = value
         self.but_new.set_sensitive(not value)
         self.but_del.set_sensitive(not value)
+        self.but_undel.set_sensitive(not value)
         if self.attrs.get('add_remove'):
             self.wid_text.set_sensitive(not value)
             self.but_add.set_sensitive(not value)
@@ -239,8 +224,10 @@ class One2Many(WidgetInterface):
 
     def _sig_new(self, widget):
         self.view.set_value()
-        if self.screen.current_record:
-            if not self.screen.current_record.validate():
+        record = self.screen.current_record
+        if record:
+            fields = self.screen.current_view.get_fields()
+            if not record.validate(fields):
                 self.screen.display()
                 return
         ctx = {}
@@ -254,12 +241,8 @@ class One2Many(WidgetInterface):
             self.screen.current_view.widget.set_sensitive(True)
         else:
             win = WinForm(self.screen, self.window, new=True,
-                    context=ctx)
-            while True:
-                if win.run():
-                    win.new()
-                else:
-                    break
+                many=True, context=ctx)
+            win.run()
             win.destroy()
         if sequence:
             self.screen.group.set_sequence(field=sequence)
@@ -268,7 +251,8 @@ class One2Many(WidgetInterface):
         self.view.set_value()
         record = self.screen.current_record
         if record:
-            if not record.validate():
+            fields = self.screen.current_view.get_fields()
+            if not record.validate(fields):
                 self.screen.display()
                 return
             win = WinForm(self.screen, self.window)
@@ -277,16 +261,20 @@ class One2Many(WidgetInterface):
 
     def _sig_next(self, widget):
         self.view.set_value()
-        if self.screen.current_record:
-            if not self.screen.current_record.validate():
+        record = self.screen.current_record
+        if record:
+            fields = self.screen.current_view.get_fields()
+            if not record.validate(fields):
                 self.screen.display()
                 return
         self.screen.display_next()
 
     def _sig_previous(self, widget):
         self.view.set_value()
-        if self.screen.current_record:
-            if not self.screen.current_record.validate():
+        record = self.screen.current_record
+        if record:
+            fields = self.screen.current_view.get_fields()
+            if not record.validate(fields):
                 self.screen.display()
                 return
         self.screen.display_prev()
@@ -339,22 +327,22 @@ class One2Many(WidgetInterface):
 
     def _sig_label(self, screen, signal_data):
         name = '_'
-        if signal_data[0] >= 0:
-            name = str(signal_data[0] + 1)
+        if signal_data[0] >= 1:
+            name = str(signal_data[0])
             self.but_open.set_sensitive(True)
             self.but_del.set_sensitive(not self._readonly)
             if self.attrs.get('add_remove'):
                 self.but_remove.set_sensitive(not self._readonly)
-            if signal_data[0] + 1 < signal_data[1]:
+            if signal_data[0] < signal_data[1]:
                 self.but_next.set_sensitive(True)
             else:
                 self.but_next.set_sensitive(False)
-            if signal_data[0] > 0:
+            if signal_data[0] > 1:
                 self.but_pre.set_sensitive(True)
             else:
                 self.but_pre.set_sensitive(False)
-            self.but_del.set_sensitive(True)
-            self.but_undel.set_sensitive(True)
+            self.but_del.set_sensitive(not self._readonly)
+            self.but_undel.set_sensitive(not self._readonly)
         else:
             self.but_open.set_sensitive(False)
             self.but_del.set_sensitive(False)
@@ -396,7 +384,7 @@ class One2Many(WidgetInterface):
 
     def set_value(self, record, field):
         self.screen.current_view.set_value()
-        if self.screen.is_modified():
-            record.modified = True
+        if self.screen.modified(): # TODO check if required
             record.modified_fields.setdefault(field.name)
+            record.signal('record-modified')
         return True

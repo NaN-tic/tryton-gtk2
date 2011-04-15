@@ -25,7 +25,6 @@ class Many2Many(WidgetInterface):
         self.wid_text = gtk.Entry()
         self.wid_text.set_property('width_chars', 13)
         self.wid_text.connect('activate', self._sig_activate)
-        self.wid_text.connect('button_press_event', self._menu_open)
         hbox.pack_start(self.wid_text, expand=True, fill=True)
 
         hbox.pack_start(gtk.VSeparator(), padding=2, expand=False, fill=False)
@@ -61,7 +60,7 @@ class Many2Many(WidgetInterface):
         hbox.set_focus_chain([self.wid_text])
 
         self.screen = Screen(attrs['relation'], self.window,
-                view_type=['tree'], views_preload=attrs.get('views', {}),
+                mode=['tree'], views_preload=attrs.get('views', {}),
                 row_activate=self._on_activate)
 
         if not isinstance(self.screen.window, gtk.Dialog):
@@ -150,6 +149,8 @@ class Many2Many(WidgetInterface):
             win = WinForm(self.screen, self.window)
             if win.run():
                 self.screen.current_record.save()
+            else:
+                self.screen.current_record.cancel()
             win.destroy()
 
     def _readonly_set(self, value):

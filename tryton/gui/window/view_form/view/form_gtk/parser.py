@@ -83,7 +83,7 @@ class Button(object):
                             }, self.form.window, context=ctx)
                 else:
                     raise Exception('Unallowed button type')
-                self.form.screen.reload(writen=True)
+                self.form.screen.reload(written=True)
         else:
             self.form.screen.display()
 
@@ -292,9 +292,10 @@ class _container(object):
 
 class ParserForm(ParserInterface):
 
-    def __init__(self, window, parent=None, attrs=None, screen=None):
+    def __init__(self, window, parent=None, attrs=None, screen=None,
+            children_field=None):
         super(ParserForm, self).__init__(window, parent=parent, attrs=attrs,
-                screen=screen)
+                screen=screen, children_field=children_field)
         self.widget_id = 0
 
     def parse(self, model_name, root_node, fields, notebook=None, paned=None,
@@ -322,8 +323,7 @@ class ParserForm(ParserInterface):
             attrs = common.node_attributes(node)
             if not cursor_widget:
                 if attrs.get('name') and fields.get(attrs['name']) \
-                        and not fields[attrs['name']].attrs.get('exclude_field',
-                                False):
+                        and attrs['name'] != self.screen.exclude_field:
                     cursor_widget = attrs.get('name')
             if node.localName == 'image':
                 common.ICONFACTORY.register_icon(attrs['name'])
@@ -359,6 +359,9 @@ class ParserForm(ParserInterface):
             elif node.localName == 'label':
                 text = attrs.get('string', '')
                 if 'name' in attrs and attrs['name'] in fields:
+                    if attrs['name'] == self.screen.exclude_field:
+                        container.empty_add(int(attrs.get('colspan', 1)))
+                        continue
                     for attr_name in ('states', 'invisible'):
                         if attr_name not in attrs \
                                 and attr_name in fields[attrs['name']].attrs:
@@ -470,7 +473,7 @@ class ParserForm(ParserInterface):
                         gtk.gdk.PIXBUF_ROTATE_COUNTERCLOCKWISE)
                 elif CONFIG['client.form_tab'] == 'right':
                     angle = -90
-                    tab_box, image_pos = gtk.VBox(spacing=3)
+                    tab_box = gtk.VBox(spacing=3)
                     image_pos, image_rotate = ('start',
                         gtk.gdk.PIXBUF_ROTATE_CLOCKWISE)
                 else:
@@ -480,6 +483,8 @@ class ParserForm(ParserInterface):
                         gtk.gdk.PIXBUF_ROTATE_NONE)
                 text = attrs.get('string', '')
                 if 'name' in attrs and attrs['name'] in fields:
+                    if attrs['name'] == self.screen.exclude_field:
+                        continue
                     for attr_name in ('states', 'invisible'):
                         if attr_name in fields[attrs['name']].attrs:
                             attrs[attr_name] = \
@@ -532,6 +537,9 @@ class ParserForm(ParserInterface):
 
             elif node.localName == 'field':
                 name = str(attrs['name'])
+                if name == self.screen.exclude_field:
+                    container.empty_add(int(attrs.get('colspan', 1)))
+                    continue
                 if name not in fields:
                     container.empty_add(int(attrs.get('colspan', 1)))
                     log = logging.getLogger('view')
@@ -543,7 +551,8 @@ class ParserForm(ParserInterface):
                     continue
                 for attr_name in ('relation', 'domain', 'selection',
                         'relation_field', 'string', 'views', 'invisible',
-                        'add_remove', 'sort', 'context', 'size', 'filename'):
+                        'add_remove', 'sort', 'context', 'size', 'filename',
+                        'autocomplete'):
                     if attr_name in fields[name].attrs and \
                             not attr_name in attrs:
                         attrs[attr_name] = fields[name].attrs[attr_name]
@@ -592,6 +601,9 @@ class ParserForm(ParserInterface):
                 button_list += buttons
                 text = ''
                 if 'name' in attrs and attrs['name'] in fields:
+                    if attrs['name'] == self.screen.exclude_field:
+                        container.empty_add(int(attrs.get('colspan', 1)))
+                        continue
                     for attr_name in ('states', 'invisible'):
                         if attr_name in fields[attrs['name']].attrs:
                             attrs[attr_name] = fields[attrs['name']
