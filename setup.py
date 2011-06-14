@@ -49,9 +49,13 @@ data_files=[
         glob.glob('share/locale/fr_FR/LC_MESSAGES/*.mo')),
     ('share/locale/ru_RU/LC_MESSAGES',
         glob.glob('share/locale/ru_RU/LC_MESSAGES/*.mo')),
+    ('share/locale/sl_SI/LC_MESSAGES',
+        glob.glob('share/locale/sl_SI/LC_MESSAGES/*.mo')),
     ('share/locale/ja_JP/LC_MESSAGES',
         glob.glob('share/locale/ja_JP/LC_MESSAGES/*.mo')),
 ]
+
+trans_lang = ('bg', 'cs', 'de', 'es', 'fr', 'ru', 'sl', 'ja')
 
 if os.name == 'nt':
     import py2exe
@@ -141,6 +145,9 @@ dist = setup(name=PACKAGE,
         'Natural Language :: German',
         'Natural Language :: Russian',
         'Natural Language :: Spanish',
+        'Natural Language :: Slovak',
+        'Natural Language :: Slovenian',
+        'Natural Language :: Japanese',
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 2.5',
         'Programming Language :: Python :: 2.6',
@@ -229,7 +236,7 @@ if os.name == 'nt':
             if os.path.isfile(file):
                 shutil.copy(file, dist_dir)
 
-        for lang in ('de', 'es', 'fr', 'ru'):
+        for lang in trans_lang:
             if os.path.isdir(os.path.join(dist_dir, 'share', 'locale', lang)):
                 shutil.rmtree(os.path.join(dist_dir, 'share', 'locale', lang))
             shutil.copytree(os.path.join(gtk_dir, 'share', 'locale', lang),
@@ -323,7 +330,7 @@ elif os.name == 'mac' \
         shutil.copy(os.path.join(gtk_dir, 'share', 'themes', 'Clearlooks',
             'gtk-2.0', 'gtkrc'), os.path.join(resources_dir, 'gtkrc'))
 
-        for lang in ('de', 'es', 'fr', 'ru'):
+        for lang in trans_lang:
             if os.path.isdir(os.path.join(resources_dir, 'share', 'locale', lang)):
                 shutil.rmtree(os.path.join(resources_dir, 'share', 'locale', lang))
             shutil.copytree(os.path.join(gtk_dir, 'share', 'locale', lang),
