@@ -430,12 +430,6 @@ class O2MField(CharField):
         record.parent.validate(softvalidation=True)
         record.parent.signal('record-changed')
 
-    def _group_list_changed(self, group, signal):
-        group.parent.group.signal('group-list-changed', signal)
-
-    def _group_cleared(self, group, signal):
-        group.parent.signal('group-cleared')
-
     def _set_default_value(self, record):
         if record.value.get(self.name) is not None:
             return
@@ -450,8 +444,6 @@ class O2MField(CharField):
         if record.model_name == self.attrs['relation']:
             group.fields = record.group.fields
         group.signal_connect(group, 'group-changed', self._group_changed)
-        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
-        group.signal_connect(group, 'group-cleared', self._group_cleared)
         record.value[self.name] = group
 
     def get_client(self, record):
@@ -461,8 +453,12 @@ class O2MField(CharField):
     def get(self, record, check_load=True, readonly=True, modified=False):
         if record.value.get(self.name) is None:
             return []
+        record_removed = record.value[self.name].record_removed
+        record_deleted = record.value[self.name].record_deleted
         result = [('add', [])]
         for record2 in record.value[self.name]:
+            if record2 in record_removed or record2 in record_deleted:
+                continue
             if record2.id > 0:
                 values = record2.get(check_load=check_load,
                     get_readonly=readonly, get_modifiedonly=modified)
@@ -472,12 +468,10 @@ class O2MField(CharField):
             else:
                 result.append(('create',
                     record2.get(check_load=check_load, get_readonly=readonly)))
-        if record.value[self.name].record_removed:
-            result.append(('unlink', [x.id for x in \
-                record.value[self.name].record_removed]))
-        if record.value[self.name].record_deleted:
-            result.append(('delete', [x.id for x in \
-                record.value[self.name].record_deleted]))
+        if record_removed:
+            result.append(('unlink', [x.id for x in record_removed]))
+        if record_deleted:
+            result.append(('delete', [x.id for x in record_deleted]))
         return result
 
     def get_timestamp(self, record):
@@ -521,8 +515,6 @@ class O2MField(CharField):
         record.value[self.name] = group
         group.load(value, display=False)
         group.signal_connect(group, 'group-changed', self._group_changed)
-        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
-        group.signal_connect(group, 'group-cleared', self._group_cleared)
         if modified:
             record.modified_fields.setdefault(self.name)
             record.signal('record-modified')
@@ -587,8 +579,6 @@ class O2MField(CharField):
             new_record.set_default(vals, modified=modified)
             group.add(new_record)
         group.signal_connect(group, 'group-changed', self._group_changed)
-        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
-        group.signal_connect(group, 'group-cleared', self._group_cleared)
         return True
 
     def set_on_change(self, record, value):
@@ -714,8 +704,6 @@ class M2MField(O2MField):
         group.fields = fields
         group.load(value, display=False)
         group.signal_connect(group, 'group-changed', self._group_changed)
-        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
-        group.signal_connect(group, 'group-cleared', self._group_cleared)
         if modified:
             record.modified_fields.setdefault(self.name)
             record.signal('record-modified')
