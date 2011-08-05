@@ -429,6 +429,14 @@ class O2MField(CharField):
         record.parent.validate(softvalidation=True)
         record.parent.signal('record-changed')
 
+    def _group_list_changed(self, group, signal):
+        if group.model_name == group.parent.model_name:
+            group.parent.group.signal('group-list-changed', signal)
+
+    def _group_cleared(self, group, signal):
+        if group.model_name == group.parent.model_name:
+            group.parent.signal('group-cleared')
+
     def _set_default_value(self, record):
         if record.value.get(self.name) is not None:
             return
@@ -443,6 +451,8 @@ class O2MField(CharField):
         if record.model_name == self.attrs['relation']:
             group.fields = record.group.fields
         group.signal_connect(group, 'group-changed', self._group_changed)
+        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
+        group.signal_connect(group, 'group-cleared', self._group_cleared)
         record.value[self.name] = group
 
     def get_client(self, record):
@@ -514,6 +524,8 @@ class O2MField(CharField):
         record.value[self.name] = group
         group.load(value, display=False)
         group.signal_connect(group, 'group-changed', self._group_changed)
+        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
+        group.signal_connect(group, 'group-cleared', self._group_cleared)
         if modified:
             record.modified_fields.setdefault(self.name)
             record.signal('record-modified')
@@ -577,6 +589,8 @@ class O2MField(CharField):
             new_record.set_default(vals, modified=modified)
             group.add(new_record)
         group.signal_connect(group, 'group-changed', self._group_changed)
+        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
+        group.signal_connect(group, 'group-cleared', self._group_cleared)
         return True
 
     def set_on_change(self, record, value):
@@ -701,6 +715,8 @@ class M2MField(O2MField):
         group.fields = fields
         group.load(value, display=False)
         group.signal_connect(group, 'group-changed', self._group_changed)
+        group.signal_connect(group, 'group-list-changed', self._group_list_changed)
+        group.signal_connect(group, 'group-cleared', self._group_cleared)
         if modified:
             record.modified_fields.setdefault(self.name)
             record.signal('record-modified')
