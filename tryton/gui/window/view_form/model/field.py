@@ -361,7 +361,6 @@ class M2OField(CharField):
             else:
                 value = None
         if not rec_name and value >= 0:
-            int(value)
             args = ('model', self.attrs['relation'], 'read', value,
                     ['rec_name'], rpc.CONTEXT)
             try:
