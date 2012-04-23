@@ -1014,7 +1014,7 @@ def process_exception(exception, *args, **kwargs):
                     password = ask(_('Password:'), visibility=False)
                     if password is None:
                         Main.get_main().sig_logout()
-                        raise TrytonError('NotLogged')
+                        return False
                     res = rpc.login(rpc._USERNAME, password, hostname, port,
                             rpc._DATABASE)
                     Main.get_main().refresh_ssl()
@@ -1160,7 +1160,9 @@ class DBProgress(object):
 
 
 class RPCException(Exception):
-    pass
+
+    def __init__(self, exception):
+        self.exception = exception
 
 
 class RPCProgress(object):
@@ -1258,7 +1260,7 @@ class RPCProgress(object):
                     self.error = False
                     self.exception = None
                     return self.run(process_exception_p)
-                raise RPCException()
+                raise RPCException(self.exception)
             else:
                 raise self.exception
         return self.res
