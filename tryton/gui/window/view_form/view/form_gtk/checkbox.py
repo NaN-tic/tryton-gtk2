@@ -6,15 +6,13 @@ import gettext
 
 _ = gettext.gettext
 
+
 class CheckBox(WidgetInterface):
 
-    def __init__(self, field_name, model_name, window, attrs=None):
-        super(CheckBox, self).__init__(field_name, model_name, window,
-                attrs=attrs)
+    def __init__(self, field_name, model_name, attrs=None):
+        super(CheckBox, self).__init__(field_name, model_name, attrs=attrs)
         self.widget = gtk.CheckButton()
-        self.widget.connect('focus-in-event', lambda x, y: self._focus_in())
         self.widget.connect('focus-out-event', lambda x, y: self._focus_out())
-        self.widget.connect('button_press_event', self._menu_open)
         self.widget.connect_after('toggled', self.sig_activate)
 
     def _readonly_set(self, value):
@@ -30,9 +28,3 @@ class CheckBox(WidgetInterface):
             self.widget.set_active(False)
             return False
         self.widget.set_active(bool(field.get(record)))
-
-    def display_value(self):
-        if self.widget.get_active():
-            return _('True')
-        else:
-            return _('False')

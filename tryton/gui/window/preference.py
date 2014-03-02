@@ -3,25 +3,28 @@
 "Preference"
 import gettext
 import gtk
-import tryton.rpc as rpc
 import copy
 from tryton.gui.window.view_form.screen import Screen
 from tryton.config import TRYTON_ICON
 import tryton.common as common
+from tryton.common import RPCExecute, RPCException
+from tryton.gui.window.nomodal import NoModal
+import tryton.rpc as rpc
 
 _ = gettext.gettext
 
 
-class Preference(object):
+class Preference(NoModal):
     "Preference window"
 
-    def __init__(self, user, parent):
-        self.win = gtk.Dialog(_('Preferences'), parent,
-                gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT)
+    def __init__(self, user, callback):
+        NoModal.__init__(self)
+        self.callback = callback
+        self.win = gtk.Dialog(_('Preferences'), self.parent,
+            gtk.DIALOG_DESTROY_WITH_PARENT)
         self.win.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.win.set_has_separator(False)
         self.win.set_icon(TRYTON_ICON)
-        self.parent = parent
 
         self.accel_group = gtk.AccelGroup()
         self.win.add_accel_group(self.accel_group)
@@ -33,74 +36,71 @@ class Preference(object):
                 gtk.keysyms.Return, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
 
         self.win.set_default_response(gtk.RESPONSE_OK)
+        self.win.connect('response', self.response)
 
-        args = ('model', 'res.user', 'get_preferences_fields_view',
-                rpc.CONTEXT)
         try:
-            res = rpc.execute(*args)
-        except Exception, exception:
-            res = common.process_exception(exception, parent, *args)
-            if not res:
-                self.win.destroy()
-                self.win = None
-                return
+            view = RPCExecute('model', 'res.user',
+                'get_preferences_fields_view')
+        except RPCException:
+            self.win.destroy()
+            self.win = None
+            return
 
         title = gtk.Label(_('Edit User Preferences'))
         title.show()
         self.win.vbox.pack_start(title, expand=False, fill=True)
-        arch = res['arch']
-        fields = res['fields']
-        self.screen = Screen('res.user', self.win, view_type=[])
+        self.screen = Screen('res.user', mode=[])
+        # Reset readonly set automaticly by MODELACCESS
+        self.screen.readonly = False
+        self.screen.group.readonly = False
+        self.screen.group.skip_model_access = True
+        self.screen.add_view(view)
+        self.screen.switch_view()
         self.screen.new(default=False)
-        self.screen.add_view(arch, fields, display=True)
 
-        args = ('model', 'res.user', 'get_preferences', False, rpc.CONTEXT)
         try:
-            preferences = rpc.execute(*args)
-        except Exception, exception:
-            preferences = common.process_exception(exception, parent, *args)
-            if not preferences:
-                self.win.destroy()
-                raise
+            preferences = RPCExecute('model', 'res.user', 'get_preferences',
+                False)
+        except RPCException:
+            self.win.destroy()
+            self.win = None
+            return
         self.screen.current_record.set(preferences)
+        self.screen.current_record.id = rpc._USER
+        self.screen.current_record.validate(softvalidation=True)
+        self.screen.display(set_cursor=True)
 
-        width, height = self.screen.screen_container.size_get()
-        parent_width, parent_height = parent.get_size()
-        self.screen.widget.set_size_request(min(parent_width - 20, width + 20),
-                min(parent_height - 60, height + 25))
         self.screen.widget.show()
         self.win.vbox.pack_start(self.screen.widget)
         self.win.set_title(_('Preference'))
+
+        width, height = self.parent.get_size()
+        self.win.set_default_size(int(width * 0.9), int(height * 0.9))
+
+        self.register()
         self.win.show()
 
-    def run(self):
-        "Run the window"
-        if not self.win:
-            return False
-        res = False
-        while True:
-            if self.win.run() == gtk.RESPONSE_OK:
-                if self.screen.current_record.validate():
-                    vals = copy.copy(self.screen.get(get_modifiedonly=True))
-                    if 'password' in vals:
-                        password = common.ask(_('Current Password:'),
-                                self.win, visibility=False)
-                        if not password:
-                            break
-                    else:
-                        password = False
-                    args = ('model', 'res.user', 'set_preferences', vals,
-                            password, rpc.CONTEXT)
-                    try:
-                        rpc.execute(*args)
-                    except Exception, exception:
-                        if not common.process_exception(exception, self.win,
-                                *args):
-                            continue
-                    res = True
-                    break
-            else:
-                break
+    def response(self, win, response_id):
+        if response_id == gtk.RESPONSE_OK:
+            if self.screen.current_record.validate():
+                vals = copy.copy(self.screen.get())
+                if 'password' in vals:
+                    password = common.ask(_('Current Password:'),
+                        visibility=False)
+                    if not password:
+                        return
+                else:
+                    password = False
+                try:
+                    RPCExecute('model', 'res.user', 'set_preferences',
+                        vals, password)
+                except RPCException:
+                    return
         self.parent.present()
+        self.destroy()
+        self.callback()
+
+    def destroy(self):
+        self.screen.destroy()
         self.win.destroy()
-        return res
+        NoModal.destroy(self)

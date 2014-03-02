@@ -1,8 +1,9 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-#This code is inspired by the pycha project (http://www.lorenzogil.com/projects/pycha/)
+#This code is inspired by the pycha project
+#(http://www.lorenzogil.com/projects/pycha/)
 from graph import Graph
-from tryton.common import hex2rgb, lighten, float_time_to_text
+from tryton.common import float_time_to_text
 import locale
 import math
 import cairo
@@ -10,6 +11,10 @@ import tryton.rpc as rpc
 
 
 class Bar(Graph):
+
+    def __init__(self, *args, **kwargs):
+        super(Bar, self).__init__(*args, **kwargs)
+        self.bars = []
 
     def drawGraph(self, cr, width, height):
 
@@ -21,8 +26,8 @@ class Bar(Graph):
             w = self.area.w * bar.w
             h = self.area.h * bar.h
 
-            if w < 1 or h <1:
-                return # don't draw too small
+            if w < 1 or h < 1:
+                return  # don't draw too small
 
             cr.set_source_rgba(0, 0, 0, 0.15)
             rectangle = self._getShadowRectangle(x, y, w, h)
@@ -52,7 +57,8 @@ class Bar(Graph):
 
     def sourceRectangle(self, x, y, w, h, r, g, b):
         linear = cairo.LinearGradient((x + w) / 2, y, (x + w) / 2, y + h)
-        linear.add_color_stop_rgb(0, 3.5 * r / 5.0, 3.5 * g / 5.0, 3.5 * b / 5.0)
+        linear.add_color_stop_rgb(0, 3.5 * r / 5.0, 3.5 * g / 5.0,
+            3.5 * b / 5.0)
         linear.add_color_stop_rgb(1, r, g, b)
         return linear
 
@@ -71,8 +77,9 @@ class Bar(Graph):
 
         highlight = False
         draw_bars = []
-        yfields_float_time = dict([(x.get('key', x['name']), x.get('float_time'))
-                for x in self.yfields if x.get('widget')])
+        yfields_float_time = dict(
+            (x.get('key', x['name']), x.get('float_time'))
+            for x in self.yfields if x.get('widget'))
         for bar in self.bars:
             if intersect(bar, event):
                 if not bar.highlight:
@@ -115,12 +122,12 @@ class Bar(Graph):
             self.queue_draw_area(minx - 1, miny - 1,
                     maxx - minx + 2, maxy - miny + 2)
 
-    def action(self, window):
-        super(Bar, self).action(window)
+    def action(self):
+        super(Bar, self).action()
         for bar in self.bars:
             if bar.highlight:
                 ids = self.ids[bar.xname]
-                self.action_keyword(ids, window)
+                self.action_keyword(ids)
 
 
 class VerticalBar(Bar):
@@ -143,7 +150,7 @@ class VerticalBar(Bar):
                 yval = self.datas[xfield][yfield]
 
                 x = (xval - self.minxval) * self.xscale + \
-                        barMargin + (j * barWidthForSet)
+                    barMargin + (j * barWidthForSet)
                 y = 1.0 - (yval - self.minyval) * self.yscale
                 w = barWidthForSet
                 h = yval * self.yscale
@@ -166,7 +173,7 @@ class VerticalBar(Bar):
     def YLabels(self):
         ylabels = super(VerticalBar, self).YLabels()
         if len([x.get('key', x['name']) for x in self.yfields
-            if x.get('widget')]) == len(self.yfields):
+                    if x.get('widget')]) == len(self.yfields):
 
             def format(val):
                 val = locale.atof(val)
@@ -179,7 +186,7 @@ class VerticalBar(Bar):
         return ylabels
 
     def _getShadowRectangle(self, x, y, w, h):
-        return (x-2, y-2, w+4, h+2)
+        return (x - 2, y - 2, w + 4, h + 2)
 
 
 class HorizontalBar(Bar):
@@ -203,7 +210,7 @@ class HorizontalBar(Bar):
 
                 x = - self.minyval * self.yscale
                 y = (xval - self.minxval) * self.xscale + \
-                        barMargin + (j * barWidthForSet)
+                    barMargin + (j * barWidthForSet)
                 w = yval * self.yscale
                 h = barWidthForSet
 
@@ -225,7 +232,7 @@ class HorizontalBar(Bar):
     def XLabels(self):
         ylabels = super(HorizontalBar, self).YLabels()
         if len([x.get('key', x['name']) for x in self.yfields
-            if x.get('widget')]) == len(self.yfields):
+                    if x.get('widget')]) == len(self.yfields):
             conv = None
             float_time = reduce(lambda x, y: x == y and x or False,
                     [x.get('float_time') for x in self.yfields])
@@ -236,11 +243,11 @@ class HorizontalBar(Bar):
         return [(x[0], x[1]) for x in ylabels]
 
     def _getShadowRectangle(self, x, y, w, h):
-        return (x, y-2, w+2, h+4)
+        return (x, y - 2, w + 2, h + 4)
 
     def _getLegendPosition(self, width, height):
         return self.area.x + self.area.w * 0.95 - width, \
-                self.area.y + self.area.h * 0.05
+            self.area.y + self.area.h * 0.05
 
     def drawLines(self, cr, width, height):
         for w, label in self.XLabels():

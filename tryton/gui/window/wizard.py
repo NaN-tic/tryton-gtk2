@@ -2,186 +2,180 @@
 #this repository contains the full copyright notices and license terms.
 import gtk
 import pango
+import gettext
+import socket
+
 from tryton.signal_event import SignalEvent
 import tryton.rpc as rpc
 import tryton.common as common
 from tryton.gui.window.view_form.screen import Screen
 from tryton.gui import Main
+from tryton.exceptions import TrytonServerError, TrytonServerUnavailable
+from tryton.gui.window.nomodal import NoModal
+from tryton.common.button import Button
+from tryton.common import RPCExecute, RPCException, TRYTON_ICON
+_ = gettext.gettext
 
 
-class Wizard(SignalEvent):
-    "Wizard"
+class Wizard(object):
 
-    def __init__(self, window, name=False):
+    def __init__(self, name=False):
         super(Wizard, self).__init__()
-        self.window = window
         self.widget = gtk.VBox(spacing=3)
+        self.toolbar_box = None
         self.widget.show()
         self.name = name or ''
-        self.model = ''
+        self.id = None
+        self.ids = None
         self.action = None
-        self.datas = None
-        self.state = 'init'
+        self.action_id = None
         self.direct_print = False
         self.email_print = False
         self.email = False
         self.context = None
         self.states = {}
+        self.response2state = {}
+        self.__processing = False
+        self.__waiting_response = False
+        self.session_id = None
+        self.start_state = None
+        self.end_state = None
+        self.screen = None
+        self.screen_state = None
+        self.state = None
 
-        self.handlers = {
-            'but_close': self.sig_close
-        }
-
-    def sig_close(self):
-        if 'end' in self.states:
-            self.states['end'].clicked()
-        return self.state == 'end'
-
-    def run(self, action, datas, state='init', direct_print=False,
-            email_print=False, email=None, context=None):
+    def run(self, action, data, direct_print=False, email_print=False,
+            email=None, context=None):
         self.action = action
-        self.datas = datas
-        self.state = state
+        self.action_id = data.get('action_id')
+        self.id = data.get('id')
+        self.ids = data.get('ids')
+        self.model = data.get('model')
         self.direct_print = direct_print
         self.email_print = email_print
         self.email = email
         self.context = context
-        if not 'form' in datas:
-            datas['form'] = {}
-        args = ('wizard', action, 'create')
         try:
-            self.wiz_id = rpc.execute(*args)
-        except Exception, exception:
-            self.wiz_id = common.process_exception(exception, self.window, *args)
-            if not self.wiz_id:
-                return
+            result = RPCExecute('wizard', action, 'create')
+        except RPCException:
+            return
+        self.session_id, self.start_state, self.end_state = result
+        self.state = self.start_state
         self.process()
 
     def process(self):
         from tryton.action import Action
-        res = {}
-        while self.state != 'end':
-            ctx = self.context.copy()
-            ctx.update(rpc.CONTEXT)
-            ctx['active_id'] = self.datas.get('id')
-            ctx['active_ids'] = self.datas.get('ids')
-            rpcprogress = common.RPCProgress('execute', ('wizard',
-                self.action, 'execute', self.wiz_id, self.datas, self.state, ctx),
-                self.window)
-            try:
-                res = rpcprogress.run()
-            except Exception, exception:
-                common.process_exception(exception, self.window)
-                break
-            if not res:
-                self.end()
-                return
-            self.clean()
-
-            if 'datas' in res:
-                self.datas['form'] = res['datas']
-            elif res['type'] == 'form':
-                self.datas['form'] = {}
-            if res['type'] == 'form':
-                self.update(res['arch'], res['fields'], res['state'],
-                            res['object'], context=ctx)
-                self.screen.current_record.set_default(self.datas['form'])
-                break
-            elif res['type'] == 'action':
-                self.state = res['state']
-                if self.state == 'end':
-                    self.end()
-                Action._exec_action(res['action'], self.window, self.datas,
-                        context=ctx)
-                if self.state == 'end':
-                    return
-            elif res['type'] == 'print':
-                self.datas['report_id'] = res.get('report_id', False)
-                if res.get('get_id_from_action', False):
-                    backup_ids = datas['ids']
-                    self.datas['ids'] = self.datas['form']['ids']
-                    Action.exec_report(res['report'], self.datas, self.window,
-                            direct_print=self.direct_print,
-                            email_print=self.email_print, email=self.email,
-                            context=ctx)
-                    self.datas['ids'] = backup_ids
+        if self.__processing or self.__waiting_response:
+            return
+        try:
+            self.__processing = True
+            while self.state != self.end_state:
+                ctx = self.context.copy()
+                ctx['active_id'] = self.id
+                ctx['active_ids'] = self.ids
+                ctx['active_model'] = self.model
+                ctx['action_id'] = self.action_id
+                if self.screen:
+                    data = {
+                        self.screen_state: self.screen.get_on_change_value(),
+                        }
                 else:
-                    Action.exec_report(res['report'], self.datas, self.window,
-                            direct_print=self.direct_print,
-                            email_print=self.email_print, email=self.email,
-                            context=ctx)
-                self.state = res['state']
-            elif res['type'] == 'state':
-                self.state = res['state']
+                    data = {}
+                try:
+                    result = RPCExecute('wizard', self.action, 'execute',
+                        self.session_id, data, self.state, context=ctx)
+                except RPCException, rpc_exception:
+                    if (not isinstance(rpc_exception.exception,
+                            TrytonServerError)
+                            or not self.screen):
+                        self.state = self.end_state
+                    break
 
-        if self.state == 'end':
-            self.end()
+                if 'view' in result:
+                    self.clean()
+                    view = result['view']
+                    self.update(view['fields_view'], view['defaults'],
+                        view['buttons'])
+                    self.screen_state = view['state']
+                    self.__waiting_response = True
+                else:
+                    self.state = self.end_state
+
+                if 'actions' in result:
+                    sensitive_widget = self.widget.get_toplevel()
+                    if not 'view' in result:
+                        self.end()
+                    for action in result['actions']:
+                        Action._exec_action(*action, context=ctx)
+                    if (not 'view' in result
+                            or (action[0]['type'] == 'ir.action.wizard'
+                                and not sensitive_widget.props.sensitive)):
+                        return
+                if self.__waiting_response:
+                    break
+
+            if self.state == self.end_state:
+                self.end()
+        finally:
+            self.__processing = False
 
     def destroy(self):
-        if hasattr(self, 'screen'):
-            self.screen.signal_unconnect(self)
+        if self.screen:
             self.screen.destroy()
-            del self.screen
-        del self.widget
 
     def end(self):
         try:
-            rpc.execute('wizard', self.action, 'delete', self.wiz_id)
-            #XXX to remove when company displayed in status bar
-            rpc.context_reload()
-        except:
+            return RPCExecute('wizard', self.action, 'delete', self.session_id,
+                process_exception=False)
+            if self.action == 'ir.module.module.config_wizard':
+                rpc.context_reload()
+                Main.get_main().sig_win_menu()
+        except (TrytonServerError, socket.error, TrytonServerUnavailable):
             pass
-        Main.get_main()._win_del(self.widget)
 
     def clean(self):
         for widget in self.widget.get_children():
             self.widget.remove(widget)
         self.states = {}
 
-    def sig_clicked(self, widget, state):
+    def response(self, widget, response):
+        self.__waiting_response = False
+        state = self.response2state.get(response, self.end_state)
         self.screen.current_view.set_value()
-        if not self.screen.current_record.validate() \
-                and state != 'end':
-            self.screen.display()
+        if (not self.screen.current_record.validate()
+                and state != self.end_state):
+            self.screen.display(set_cursor=True)
             return
-        self.datas['form'].update(self.screen.get())
         self.state = state
         self.process()
 
-    def update(self, arch, fields, state, obj_name, context=None):
-        self.model = obj_name
+    def _get_button(self, definition):
+        button = Button(definition)
+        self.states[definition['state']] = button
+        response = len(self.states)
+        self.response2state[response] = definition['state']
+        button.show()
+        return button
 
-        hbuttonbox = gtk.HButtonBox()
-        hbuttonbox.set_spacing(5)
-        hbuttonbox.set_layout(gtk.BUTTONBOX_END)
-        hbuttonbox.show()
-        for i in state:
-            but = gtk.Button()
-            but.set_use_underline(True)
-            but.set_label('_' + i[1])
-            but.show()
-            but.connect('clicked', self.sig_clicked, i[0])
-            self.states[i[0]] = but
-            if len(i) >= 3:
-                icon = gtk.Image()
-                icon.set_from_stock(i[2], gtk.ICON_SIZE_BUTTON)
-                but.set_image(icon)
-            hbuttonbox.pack_start(but)
+    def _record_modified(self, screen, signal):
+        record = screen.current_record
+        for button in self.states.itervalues():
+            button.state_set(record)
 
-        val = {}
-        for i in fields:
-            if 'value' in fields[i]:
-                val[i] = fields[i]['value']
+    def update(self, view, defaults, buttons):
+        for button in buttons:
+            self._get_button(button)
 
-        self.screen = Screen(obj_name, self.window, view_type=[],
-                context=context)
-        self.screen.add_view(arch, fields, display=True)
+        self.screen = Screen(view['model'], mode=[], context=self.context)
+        self.screen.add_view(view)
+        self.screen.switch_view()
         self.screen.widget.show()
+        self.screen.signal_connect(self, 'record-modified',
+            self._record_modified)
 
         title = gtk.Label()
-        title.set_use_markup(True)
-        title.modify_font(pango.FontDescription("14"))
-        title.set_label('<b>' + self.screen.current_view.title + '</b>')
+        title.modify_font(pango.FontDescription("bold 14"))
+        title.set_label(self.screen.current_view.title)
         title.set_padding(20, 4)
         title.set_alignment(0.0, 0.5)
         title.modify_fg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#000000"))
@@ -217,6 +211,9 @@ class Wizard(SignalEvent):
 
         self.widget.pack_start(eb, expand=False, fill=True, padding=3)
 
+        if self.toolbar_box:
+            self.widget.pack_start(self.toolbar_box, False, True)
+
         viewport = gtk.Viewport()
         viewport.set_shadow_type(gtk.SHADOW_NONE)
         viewport.add(self.screen.widget)
@@ -230,8 +227,152 @@ class Wizard(SignalEvent):
 
         self.widget.pack_start(self.scrolledwindow)
 
-        self.widget.pack_start(hbuttonbox, expand=False, fill=True)
-
         self.screen.new(default=False)
-        self.screen.current_record.set_default(val)
-        self.screen.current_view.set_cursor()
+        self.screen.current_record.set_default(defaults)
+        self.screen.set_cursor()
+
+
+class WizardForm(Wizard, SignalEvent):
+    "Wizard"
+
+    def __init__(self, name=False):
+        super(WizardForm, self).__init__(name=name)
+        self.toolbar_box = gtk.HBox()
+        self.hbuttonbox = gtk.HButtonBox()
+        self.hbuttonbox.set_spacing(5)
+        self.hbuttonbox.set_layout(gtk.BUTTONBOX_END)
+        self.hbuttonbox.show()
+        self.widget.pack_start(self.toolbar_box, False, True)
+        self.dialogs = []
+
+        self.handlers = {
+            'but_close': self.sig_close
+        }
+
+    def clean(self):
+        super(WizardForm, self).clean()
+        for button in self.hbuttonbox.get_children():
+            self.hbuttonbox.remove(button)
+
+    def _get_button(self, state):
+        button = super(WizardForm, self)._get_button(state)
+        response = len(self.states)
+        button.connect('clicked', self.response, response)
+        self.hbuttonbox.pack_start(button)
+        return button
+
+    def update(self, view, defaults, buttons):
+        super(WizardForm, self).update(view, defaults, buttons)
+        self.widget.pack_start(self.hbuttonbox, expand=False, fill=True)
+
+    def sig_close(self):
+        if self.end_state in self.states:
+            self.states[self.end_state].clicked()
+        return self.state == self.end_state
+
+    def destroy(self):
+        if self.toolbar_box.get_children():
+            toolbar = self.toolbar_box.get_children()[0]
+            self.toolbar_box.remove(toolbar)
+        super(WizardForm, self).destroy()
+
+    def end(self):
+        super(WizardForm, self).end()
+        Main.get_main()._win_del(self.widget)
+
+    def set_cursor(self):
+        if self.screen:
+            self.screen.set_cursor()
+
+
+class WizardDialog(Wizard, NoModal):
+
+    def __init__(self, name=False):
+        if not name:
+            name = _('Wizard')
+        Wizard.__init__(self, name=name)
+        NoModal.__init__(self)
+        self.dia = gtk.Dialog(self.name, self.parent,
+            gtk.DIALOG_DESTROY_WITH_PARENT)
+        self.dia.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
+        self.dia.set_icon(TRYTON_ICON)
+        self.dia.set_deletable(False)
+        self.dia.connect('close', self.close)
+        self.dia.connect('response', self.response)
+
+        self.accel_group = gtk.AccelGroup()
+        self.dia.add_accel_group(self.accel_group)
+
+        self.dia.vbox.add(self.widget)
+
+        self.register()
+
+    def clean(self):
+        super(WizardDialog, self).clean()
+        hbuttonbox = self.dia.get_action_area()
+        for button in hbuttonbox.get_children():
+            hbuttonbox.remove(button)
+
+    def _get_button(self, definition):
+        button = super(WizardDialog, self)._get_button(definition)
+        response = len(self.states)
+        self.dia.add_action_widget(button, response)
+        if definition['default']:
+            button.set_flags(gtk.CAN_DEFAULT)
+            button.add_accelerator('clicked', self.accel_group,
+                gtk.keysyms.Return, gtk.gdk.CONTROL_MASK,
+                gtk.ACCEL_VISIBLE)
+            self.dia.set_default_response(response)
+        return button
+
+    def update(self, view, defaults, buttons):
+        super(WizardDialog, self).update(view, defaults, buttons)
+        sensible_allocation = self.sensible_widget.get_allocation()
+        self.dia.set_default_size(int(sensible_allocation.width * 0.9),
+            int(sensible_allocation.height * 0.9))
+        self.dia.show()
+        common.center_window(self.dia, self.parent, self.sensible_widget)
+
+    def destroy(self, action=None):
+        super(WizardDialog, self).destroy()
+        self.dia.destroy()
+        NoModal.destroy(self)
+        main = Main.get_main()
+        if self.parent == main.window:
+            current_form = main.get_page()
+            if current_form:
+                for dialog in current_form.dialogs:
+                    dialog.show()
+        if self.page.dialogs:
+            dialog = self.page.dialogs[-1]
+        else:
+            dialog = self.page
+        if (hasattr(dialog, 'screen')
+                and dialog.screen.current_record
+                and self.sensible_widget != main.window):
+            if dialog.screen.model_name == self.model:
+                ids = self.ids
+            else:
+                # Wizard run from a children record so reload parent record
+                ids = [dialog.screen.current_record.id]
+            dialog.screen.reload(ids, written=True)
+            if action:
+                dialog.screen.client_action(action)
+
+    def end(self):
+        action = super(WizardDialog, self).end()
+        self.destroy(action=action)
+
+    def close(self, widget, event=None):
+        if self.end_state in self.states:
+            self.state = self.end_state
+            self.process()
+        else:
+            widget.emit_stop_by_name('close')
+        return True
+
+    def show(self):
+        self.dia.show()
+
+    def hide(self):
+        self.dia.hide()

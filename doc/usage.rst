@@ -17,7 +17,7 @@ Synopsis
 
 ::
 
-  tryton [options]
+  tryton [options] [url]
 
 After startup, there raises the `login dialog`__ and optionally a
 `tips dialog`__.
@@ -35,11 +35,12 @@ Options
 
 -c FILE, --config=FILE               Specify alternate `configuration file`_
 
+-d, --dev                            Enable development mode, which deactivates
+                                     client side caching
+
 -v, --verbose                        Enable basic debugging
 
--d LOG_LOGGER, --log=LOG_LOGGER      Specify channels to log (ex: rpc.request, rpc.result, ...)
-
--l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: INFO, DEBUG,
+-l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: DEBUG, INFO,
                                      WARNING, ERROR, CRITICAL
 
 -u LOGIN, --user=LOGIN               Specify the login user
@@ -47,6 +48,30 @@ Options
 -p PORT, --port=PORT                 Specify the server port
 
 -s SERVER, --server=SERVER           Specify the server hostname
+
+URL
+***
+
+When an url is passed, the client will try to find already running client that
+could handle it and send to this one to open the url. If it doesn't find one
+then it will start the GUI and open the url itself.
+
+The url schemes are:
+
+    `tryton://<hostname>[:<port>]/<database>/model/<model name>[/<id>][;parameters]`
+
+    `tryton://<hostname>[:<port>]/<database>/wizard/<wizard name>[;parameters]`
+
+    `tryton://<hostname>[:<port>]/<database>/report/<report name>[;parameters]`
+
+
+where `parameters` are the corresponding fields of actions encoded in
+`JSON`_.
+
+.. _JSON: http://en.wikipedia.org/wiki/Json
+.. Note:: `model` is for `act_window`
+.. Note:: `report` must have at least a data parameter with `ids`, `id` and
+    `model name`
 
 
 Overview
@@ -56,35 +81,33 @@ all important visual parts.
 
 Figure: Tryton client application::
 
-  Client Window       _______________________________________________________
-                     |                      Tryton                      _ o x|
-                     |-------------------------------------------------------|
-  Menu bar           | File User Form Options Plugins Shortcuts Help         |
-                     |_______________________________________________________|
-                     |                                                       |
-  Tool bar           | New Save | Delete | Find Previous Next Switch    v    |
-                     |-------------------------------------------------------|
-                     |          ______                                       |
-  Tab bar            | [Menu]  |[Tab1]| [Tab2] ...                           |
-                     |---------|      | -------------------------------------|
-                     | .-------        ------------------------------------. |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-  View               | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |                                                   | |
-                     | |___________________________________________________| |
-                     |_______________________________________________________|
-  Status bar         |username company      Waiting requests...     login@...|
-                     |_______________________________________________________|
+  Client Window       ________________________________________________________________
+                     |                      Tryton                               _ o x|
+                     |----------------------------------------------------------------|
+  Menu bar           | File User Options Favorites Help                               |
+                     |________________________________________________________________|
+                     |             |          ______                                  |
+  Tabs               | Menu        |  [Tab1] |[Tab2]| [Tab3]...                       |
+                     |-------------| +-------+      +--------------------------------+|
+                     | +           | | Menu Tab2                                     ||
+                     | |-+         | |-----------------------------------------------||
+  Tool bar           | | |-        | | New Save Switch Reload | Prev Next | Attach v ||
+                     | | |-        | |-----------------------------------------------||
+                     | +           | |        _______________________                ||
+  Search widget      | |-+         | | Filter |                    *| Bookmark <- -> ||
+                     | | |-        | |-----------------------------------------------||
+                     | | |-        | |                                               ||
+                     | +           | |                                               ||
+  View               | |-+         | |                                               ||
+                     |   |-        | |                                               ||
+                     |   |-        | |                                               ||
+                     |             | |                                               ||
+                     |             | |                                               ||
+                     |             | |                                               ||
+                     |             | |                                               ||
+                     |             | |______________________________________________ ||
+  URL                |_____________| |tryton://______________________________________||
+                     |________________________________________________________________|
 
 
 Menu Bar
@@ -122,34 +145,7 @@ next one.
 
 The second mouse button (usually right mouse button) provides an additional
 contextual menu for some views and fields. In this context menu the user finds
-:term:`actions` to copy and paste contents or setting up default values or
-selections for several fields.
-
-
-Tool Bar
-^^^^^^^^
-The tool bar contains some often used menu functions mapped to icons.
-In addition to the menu bar the tool bar contains a button called
-*Attachment*.
-
-Attachment
-++++++++++
-The attachment item handles the document management system of
-Tryton which is able to attach files to any arbitrary :term:`model`. On click
-it opens the attachments :term:`dialog`. The default dialog shows a list view
-of the attached files and links. 
-
-A single Attachment has the following Options:
-
-* Attachment Name: The name of the attachment.
-* Datas: The attached File. The file size is displayed as text.
-* Link: Link to an external site as URL.
-* Preview tab: Shows a preview picture of the selected attachment.
-* Description tab: Shows and and provides editing of a free text description
-  for the selected attachment.
-* Actions:
-
-  - OK: Closes the Dialog and saves the attachment(s).
+:term:`actions` to copy and paste contents or selections for several fields.
 
 
 Tabbed Main Frame
@@ -172,100 +168,24 @@ __ TDI_
 
 .. Note:: Inside :term:`views` there can be tabs, too.
 
-Main Menu
-+++++++++
-The first left tab contains the *main menu* (... not to mix up with
-the menu bar!). The *main menu* does not contain fixed menu items.
+
+Menu
+++++
+The *menu* does not contain fixed menu items.
 All of them are dynamically provided by the actual set of the installed
 :term:`modules` depending on the access rules of the current user. If a menu
-item is clicked, the appropriate action will open in a new tab. As the figure
-below illustrates, the *main menu* is split up in three frames.
-
-The upper left frame contains the first or top level entries of the *main
-menu*. Standard top level entries are 'Administration' and 'Tryton'.
-
-.. note:: The *administration* menu will be explained in the modules
-   documentation for the 'IR' module, the *information repository*.
-
-The top level entry 'Tryton' connects to the website of the Tryton project.
-
-The right frame is showing a :term:`tree view` substructure of menu *items*
-and *headings*. With the arrow keys it is possible to navigate inside the menu.
-By pressing *Enter* or double-clicking onto the menu item the appropriate
-:term:`views` open. Use left and right arrow to expand or contract sub
-items of a heading.
-
-Figure: Main Menu Tab::
-
-       ________________________________________________________
-      |                      Tryton                       _ o x|
-      |--------------------------------------------------------|
-      | File User Form Options Plugins Shortcuts Help          |
-      |________________________________________________________|
-      |                                                        |
-      | New Save | Delete | Find Previous Next Switch     v    |
-      |________________________________________________________|
-      |   ______                                               |
-      |  |[Menu]|   [Tab1]   [Tab2] ...                        |
-      |--|      | ---------------------------------------------|
-      |  |       -------------.------------------------------. |
-      |  | Top Level Entry 1  | Menu                |        | |
-      |  | Top Level Entry 2  |---------------------+--------| |
-      |  | ...                |   Item 1            |        | |
-      |  | Administration     |   Item 2            |        | |
-      |  | Tryton             | > Heading           |        | |
-      |  |____________________|     Sub Item 1      |        | |
-      |  | Shortcuts    [+][-]|     Sub Item 2      |        | |
-      |  |--------------------|     > Sub Heading   |        | |
-      |  | Sub Item 2         |         Sub Sub ... |        | |
-      |  |                    |                     |        | |
-      |  |                    |                     |        | |
-      |  |____________________|_____________________|________| |
-      |________________________________________________________|
-      |username company      Waiting requests...     login@... |
-      |________________________________________________________|
+item is clicked, the appropriate action will open in a new tab.
 
 
-The lower left menu frame shows a user adjustable *shortcuts* menu. This menu
-is for collecting often used menu items. Using a *shortcut* item will open
-the appropriate view in a new tab, just with a double mouse click.
-A menu item is added to the *shortcut* menu by pushing the plus button [+]
-in the *shortcut* menu. The minus button [-] removes a selected *shortcut*
-item from the list.
-
-Home Action
-+++++++++++
-Another tab opens during the startup of the Tryton client: the home action.
-It is usually an item of the `Main Menu`_ opening when the user calls his
+Home
+++++
+A tab opens during the startup of the Tryton client: the home.  It is
+usually an item of the `Menu`_ opening when the user calls his
 `Home`__ action defined in the `preferences`__.
 
-__ Menu-Form-Home_
+__ Menu-User-Home_
 
 __ Menu-User-Preferences_
-
-
-Status bar
-++++++++++
-The status bar provides general informations of the state of the
-Tryton client. It is divided in three parts.
-
-* On its left side the real name and company name of the users actual company
-  is shown.
-* In the center of the status bar the number of waiting requests for the
-  actual user are displayed.
-* On its right side are details of the server connection shown including
-  database and user informations if connected. It is also noted there, if
-  there is no connection to a Tryton server at all. The right side information
-  of the status bar is build with the following pattern::
-
-    <user-name>@<tryton-server-address>:<port>/<database-name>
-
-  If the client is connected to the server with an SSL-secured connection, an
-  additional lock icon appears rightmost some certificate details in a mouse
-  hover popup.
-
-The Status bar can be enabled and disabled in the menu at
-Options > Form > Status bar
 
 
 Menu Bar Items
@@ -450,8 +370,7 @@ Server (connection) dialog:
 
 User
 ^^^^
-This menu bar item controls the preferences of the actual user and connects
-to the *request system* in Tryton.
+This menu bar item controls the preferences of the actual user.
 
 .. _Menu-User-Preferences:
 
@@ -466,271 +385,26 @@ Preferences...
   * Email: Email address of the Tryton user.
   * Signature: Signature block for the Tryton user.
   * Menu Action: Defines the action which is called as the
-    `main menu`_.
-  * Home Action: Defines the action which is called as `home action`__.
+    `Menu`_.
+  * Home Action: Defines the action which is called as `Home`__.
   * Language: Language of the client interface.
   * Timezone: The local timezone where the user/client resides.
   * Groups: Displays the users membership to access groups.
 
-__ Menu-Form-Home_
+.. _Menu-User-Menu-Reload:
 
-.. _Menu-user-send-a-request:
+Menu Reload:
+  Reload the menu.
 
-Send a Request
-  Opens a tab in :term:`form view` which enables the user to send
-  requests to other users of the same database.
+.. _Menu-User-Menu-Toggle:
 
-.. _Menu-user-read-my-request:
+Menu Toggle:
+  Toggle the menu visibility
 
-Read my Requests
-  Opens a tab in :term:`tree view` showing all requests related to the
-  actual user. Fields and actions of requests:
-
-  * On top
-
-    - From: User name of the sender
-    - To: User name of the request recipient
-    - References: Count of the attached references
-    - Subject: The subject of the request.
-    - Priority: An importance priority of the request.
-
-      + High
-      + Low
-      + Normal
-
-  * *Request* tab
-
-    - Body: The textual part of the request.
-    - History: The history of past replies to this request.
-
-      + From: Sender of the past request
-      + To: Receiver of the past request
-      + Summary: Summary of the body text of the past request.
-
-  * Trigger Date: Defines time and date when the request will be sent
-    automatically.
-  * State: State of the request. Possible states for the request are:
-
-    - Draft: The request is saved in the system, but not posted.
-    - Waiting: The request is sent without receiving a reply message.
-    - Chatting: The message is replied or in discussion.
-    - Closed: The message is closed/fulfilled/answered.
-
-  * Actions:
-
-    - Send: Sends the actual message
-    - Reply: Replies or answers the actual message
-    - close: Closes the actual message
-
-  * *References* tab
-
-    - References
-
-      + Reference: The reference type
-      + (Target): Defines an reference attached to the request.
-
-.. note:: When talking about requests, think of an internal system of
-   Tryton, which is very similar to email.
-
-
-Form
-^^^^
-The form menu contains functions for the *actual form* in the tab which
-is open. Some operations are working with one record or with a selection of
-:term:`records`. In :term:`form view` the actual record is selected for
-operations. In :term:`tree view` all selected records are used for operations.
-
-.. _Menu-Form-New:
-
-New:
-  Creates a new record.
-
-.. _Menu-Form-Save:
-
-Save:
-  Saves the actual record.
-
-.. _Menu-Form-Duplicate:
-
-Duplicate:
-  Duplicates the content of the actual record in a newly created record.
-
-.. _Menu-Form-Delete:
-
-Delete:
-  Deletes the selected or actual record.
-
-.. _Menu-Form-Find:
-
-.. _search_widget:
-
-Find...:
-  Opens a :term:`dialog` for finding :term:`fields` with search criteria and
-  operators.
-
-  * Search criteria: Defines the aspects to seek for.
-  * General search operators:
-
-    - Equals: Search for results which are exactly the same as the following
-      term.
-    - Does Not Equal: Search for results which are different from the following
-      term.
-
-  * Additional search operators on numbers, amounts and strings:
-
-    - Contains: Search for results which contain the following term.
-    - Does Not Contain:  Search for results which do not include the
-      following term.
-    - Starts With: Search for results beginning with the following term.
-    - Ends With: Search for results ending with the following term.
-
-  * Additional search operators for numbers and amounts:
-
-    - Is Between: Search for results inside a range (from - to).
-    - Is Not Between: Search for results outside a range (from - to).
-    - Is Different: Same as 'Does Not Equal', see above.
-
-  * Advanced Search expander opens additional search criteria.
-
-    - Limit: Limits the count of results.
-    - Offset: Skips a number of results and show only the following.
-
-  * Actions:
-
-    - Find: Search for results of the given criteria.
-    - New: Create a new record (used when search was fruitless, to create
-      quickly a new record).
-    - Ok: Open the selected results.
-    - Cancel
-
-.. note:: To search for deactivated records the *Active* search criteria must be
-        set to *No*.
-
-.. _Menu-Form-Next:
-
-Next:
-  Goes to the next record in a list (sequence).
-
-.. _Menu-Form-Previous:
-
-Previous:
-  Goes to the last record in a list (sequence).
-
-.. _Menu-Form-Switch_View:
-
-Switch View:
-  Switches the actual view aspect to:
-
-  * :term:`Form view`
-  * :term:`Tree view`
-  * :term:`Graph view`
-
-  Not all views provide all aspects.
-
-.. _Menu-Form-Menu:
-
-Menu:
-  Activates or reopens the menu tab.
-
-.. _Menu-Form-Home:
+.. _Menu-User-Home:
 
 Home:
-  Opens a new `home`__ tab.
-
-__ Menu-User-Preferences_
-
-.. _Menu-Form-Close:
-
-Close Tab:
-  Closes the current tab. A Request :term:`Dialog` opens in case of unsaved
-  changes.
-
-.. _Menu-Form-Previous_Tab:
-
-Previous Tab:
-  Shows the previous (left) tab of the actual tab.
-
-.. _Menu-Form-Next_Tab:
-
-Next Tab:
-  Shows the next (right) tab of the actual tab.
-
-.. _Menu-Form-View_Logs:
-
-View Logs...:
-  Shows generic information of the current record.
-
-.. _Menu-Form-Go_to_Record_ID:
-
-Go to Record ID...:
-  Opens specific record id in the current view.
-
-.. _Menu-Form-Reload_Undo:
-
-Reload/Undo:
-  Reloads the content of the actual tab. Undoes changes, if save request for
-  the current record is denied.
-
-.. _Menu-Form-Actions:
-
-Actions...:
-  Shows all actions for the actual view, model and record.
-
-.. _Menu-Form-Print:
-
-Print...:
-  Shows all print actions for the actual view, model and record.
-
-.. _Menu-Form-Export_Data:
-
-Export Data...:
-  Export of current/selected records into :term:`CSV`-file or open it in Excel.
-
-  * Predefined exports
-
-    - Choose preferences of already saved exports.
-
-  * All Fields: Fields available from the model.
-  * Fields to export: Defines the specific fields to export.
-  * Options:
-
-    - Save: Save export as a CSV file.
-    - Open: Open export in spread sheet application.
-
-  * Add field names: Add a header row with field names to the export data.
-  * Actions:
-
-    - Add: Adds selected fields to *Fields to export*.
-    - Remove: Removes selected fields from *Fields to export*.
-    - Clear: Removes all fields from *Fields to export*.
-    - Save Export: Saves field mapping to a *Predefined export* with a name.
-    - Delete Export: Deletes a selected *Predefined export*.
-    - Ok: Exports the data (action depending on *Options*).
-    - Cancel
-
-.. _Menu-Form-Import_Data:
-
-Import Data...:
-  Import records from :term:`CSV`-file.
-
-  * All Fields: Fields available in the model (required fields are marked up).
-  * Fields to Import: Exact sequence of all columns in the CSV file.
-  * File to Import: File :term:`dialog` for choosing a CSV file to import.
-  * CSV Parameters: Setup specific parameters for chosen CSV file.
-
-    - Field Separator: Character which separates CSV fields.
-    - Text Delimiter: Character which encloses text in CSV.
-    - Encoding: :term:`Character encoding` of CSV file.
-    - Lines to Skip: Count of lines to skip a headline or another offset.
-
-  * Actions:
-
-    - Add: Adds fields to *Fields to Import*.
-    - Remove: Deletes fields from *Fields to Import*.
-    - Clear: Removes all fields from *Fields to Import*.
-    - Auto-Detect: Tries to auto detect fields in the CSV *File to Import*.
-    - Ok: Proceeds the data import.
-    - Cancel
+  Opens a new `Home`__ tab.
 
 
 Options
@@ -780,8 +454,7 @@ Normal:
 .. _Menu-Options-Mode_PDA:
 
 PDA:
-  Shows the client in a condensed mode. The PDA (Personal Data Assistant) mode
-  hides the shortcut menu in tree views and the system status bar.
+  Shows the client in a condensed mode.
 
 Form
 ++++
@@ -791,17 +464,17 @@ Form
 Toolbar:
   Checkbox to disable/enable the tool bar.
 
-.. _Menu-Options-Form-Statusbar:
-
-Statusbar:
-  Checkbox to disable/enable the status bar.
-
 .. _Menu-Options-Form-Save_Columns_Width:
 
 Save Width/Height:
   Check box to enable saving of manually adjusted widths of columns in lists
   and trees. Additionally saving of manually adjusted widths and heights of
   dialog and popup windows.
+
+.. _Menu-Options-Form-Save_Tree_State:
+
+Save Tree Expanded State:
+  Check box to enable saving of manually expanded nodes in trees.
 
 .. _Menu-Options-Form-Spell_Checking:
 
@@ -817,24 +490,6 @@ Tabs Position
   * Left
   * Right
   * Bottom
-
-.. _Menu-Options-File_Actions:
-
-File Actions...:
-  Opens a dialog to set up file types for print and open actions.
-  Use ``"%s"`` as a placeholder for the document name.
-
-  * Provided file types:
-
-    - ODT file: Open Office Writer Document
-    - PDF file: Adobes(TM) Portable Document Format
-    - PNG file: Portable Network Graphics format
-    - TXT file: Pure text file
-
-  * Provided actions
-
-    - Open: Setting up program system call which opens the specific file type.
-    - Print: Setting up program system call printing the specific file type.
 
 .. _Menu-Options-Email:
 
@@ -866,27 +521,9 @@ Save Options:
   Saves all the options.
 
 
-Plug-ins
-^^^^^^^^
-Plug-ins are client side add-ons for Tryton. There are some included plug-ins
-with the standard client.
-
-Execute a Plug-in
-+++++++++++++++++
-Translate View:
-  Creates a translation table of the current view.
-
-Print Workflow:
-  Creates a graph which shows the work flow of the current view.
-
-Print Workflow (complex):
-  Like 'Print Workflow', with additional sub work flows inherited by the
-  current view.
-
-
-Shortcuts
+Favorites
 ^^^^^^^^^
-A collection of user defined shortcuts for specific resources.
+A collection of user defined menu favorites.
 
 
 Help
@@ -915,6 +552,317 @@ Keyboard Shortcuts...:
 About...:
   License, Contributors, Authors of Tryton
 
+Tool Bar
+********
+The tool bar contains the functionalities linked to the current tab.
+Some operations are working with one record or with a selection of
+:term:`records`. In :term:`form view` the actual record is selected for
+operations. In :term:`tree view` all selected records are used for operations.
+
+.. _Toolbar-New:
+
+New:
+  Creates a new record.
+
+.. _Toolbar-Save:
+
+Save:
+  Saves the actual record.
+
+.. _Toolbar-Switch_View:
+
+Switch View:
+  Switches the actual view aspect to:
+
+  * :term:`Form view`
+  * :term:`Tree view`
+  * :term:`Graph view`
+
+  Not all views provide all aspects.
+
+.. _Toolbar-Reload_Undo:
+
+Reload/Undo:
+  Reloads the content of the actual tab. Undoes changes, if save request for
+  the current record is denied.
+
+.. _Toolbar-Duplicate:
+
+Duplicate:
+  Duplicates the content of the actual record in a newly created record.
+
+.. _Toolbar-Delete:
+
+Delete:
+  Deletes the selected or actual record.
+
+.. _Toolbar-Previous:
+
+Previous:
+  Goes to the last record in a list (sequence).
+
+.. _Toolbar-Next:
+
+Next:
+  Goes to the next record in a list (sequence).
+
+.. _Toolbar-Search:
+
+Search:
+    Goes to the search widget.
+
+.. _Toolbar-View_Logs:
+
+View Logs...:
+  Shows generic information of the current record.
+
+.. _Toolbar-Go_to_Record_ID:
+
+Go to Record ID...:
+  Opens specific record id in the current view.
+
+.. _Toolbar-Close:
+
+Close Tab:
+  Closes the current tab. A Request :term:`Dialog` opens in case of unsaved
+  changes.
+
+.. _Toolbar-Attachment:
+
+Attachment:
+  The attachment item handles the document management system of
+  Tryton which is able to attach files to any arbitrary :term:`model`.
+  On click it opens the attachments :term:`dialog`. The default dialog
+  shows a list view of the attached files and links.
+
+.. _Toolbar-Actions:
+
+Actions...:
+  Shows all actions for the actual view, model and record.
+
+.. _Toolbar-Relate:
+
+Relate...:
+  Shows all relate view for the actual view, model and record.
+
+.. _Toolbar-Report:
+
+Report...:
+  Shows all reports for the actual view, model and record.
+
+.. _Toolbar-Email:
+
+E-Mail...:
+  Shows all email reports for the actual view, model and record.
+
+.. _Toolbar-Print:
+
+Print...:
+  Shows all print actions for the actual view, model and record.
+
+.. _Toolbar-Export_Data:
+
+Export Data...:
+  Export of current/selected records into :term:`CSV`-file or open it in Excel.
+
+  * Predefined exports
+
+    - Choose preferences of already saved exports.
+
+  * All Fields: Fields available from the model.
+  * Fields to export: Defines the specific fields to export.
+  * Options:
+
+    - Save: Save export as a CSV file.
+    - Open: Open export in spread sheet application.
+
+  * Add field names: Add a header row with field names to the export data.
+  * Actions:
+
+    - Add: Adds selected fields to *Fields to export*.
+    - Remove: Removes selected fields from *Fields to export*.
+    - Clear: Removes all fields from *Fields to export*.
+    - Save Export: Saves field mapping to a *Predefined export* with a name.
+    - Delete Export: Deletes a selected *Predefined export*.
+    - Ok: Exports the data (action depending on *Options*).
+    - Cancel
+
+.. _Toolbar-Import_Data:
+
+Import Data...:
+  Import records from :term:`CSV`-file.
+
+  * All Fields: Fields available in the model (required fields are marked up).
+  * Fields to Import: Exact sequence of all columns in the CSV file.
+  * File to Import: File :term:`dialog` for choosing a CSV file to import.
+  * CSV Parameters: Setup specific parameters for chosen CSV file.
+
+    - Field Separator: Character which separates CSV fields.
+    - Text Delimiter: Character which encloses text in CSV.
+    - Encoding: :term:`Character encoding` of CSV file.
+    - Lines to Skip: Count of lines to skip a headline or another offset.
+
+  * Actions:
+
+    - Add: Adds fields to *Fields to Import*.
+    - Remove: Deletes fields from *Fields to Import*.
+    - Clear: Removes all fields from *Fields to Import*.
+    - Auto-Detect: Tries to auto detect fields in the CSV *File to Import*.
+    - Ok: Proceeds the data import.
+    - Cancel
+
+Widgets
+*******
+
+There are a several widgets used on Tryton in client side. The follow sections
+will explains some of them.
+
+
+Date/DateTime/Time Widgets
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Those widgets has several key shortucts to quickly modify the value. Each key
+increases if lower case or decreases if upper case:
+
+    - `y`: by one year
+    - `m`: by one month
+    - `w`: by one week
+    - `d`: by one day
+    - `h`: by one hour
+    - `i`: by one minute
+    - `s`: by one second
+
+Search Widget
+^^^^^^^^^^^^^
+
+The search widget adds the ability to easily search for records on the current
+tab.  This widget is visible only on :term:`tree view`.
+
+The Syntax
+++++++++++
+
+A query is composed of search clauses.
+A clause is composed of a field name (with `:` at the end), an operator and a value.
+The field name is optional and defaults to the record name.
+The operator is also optional and defaults to `like` or `equal` depending on
+the type of the field.  The default operator is `=` except for fields of type
+`char`, `text` and `many2one` which is `ilike`.
+
+Field Names
++++++++++++
+
+All field names shown in the :term:`tree view` can be searched. Field names
+must be followed by a `:`
+
+    For example: ``Name:``
+
+If the field name contains spaces, it is possible to
+escape it using double quotes.
+
+    For example: ``"Receivable Today":``
+
+Operators
++++++++++
+
+The following operators can be used:
+
+    * `=`: equal to
+    * `<`: less then
+    * `<=`: less then or equal to
+    * `>`: greater then
+    * `>=`: greater then or equal to
+    * `!=`: not equal
+    * `!`: not equal or not like (depending of the type of field)
+
+    For example: ``Name: != Dwight``
+
+.. note:: The `ilike` operator is never explicit and `%` is appended to the
+    value to make it behaves like `starts with`
+
+Values
+++++++
+
+The format of the value depends on the type of the field.
+A list of values can be set using `;` as separator.
+
+    For example: ``Name: Michael; Pam``
+
+    It will find all records having the `Name` starting with `Michael` or
+    `Pam`.
+
+A range of number values can be set using `..`.
+
+    For example: ``Amount: 100..500``
+
+    It will find all records with `Amount` between `100` and `500` (left
+    included and right excluded)
+
+There are two wildcards:
+
+    * `%`: matches any string of zero or more characters.
+    * `_`: matches any single character.
+
+It is possible to escape special characters in values by using double quotes.
+
+    For example: ``Name: "Michael:Scott"``
+
+    Here it will search with the value `Michael:Scott`.
+
+Clause composition
+++++++++++++++++++
+
+The clauses can be composed using the two boolean operators `and` and `or`.
+By default, there is an implicit `and` between each clause if no operator is
+specified.
+
+    For example: ``Name: Michael Amount: 100``
+
+    is the same as ``Name: Michael and Amount: 100``
+
+The `and` operator has a highest precedence than `or` but you can change it by
+using parenthesis.
+
+    For example: ``(Name: Michael or Name: Pam) and Amount: 100``
+
+    is different than ``Name: Michael or Name: Pam and Amount: 100``
+
+    which is evaluated as ``Name: Michael or (Name: Pam and Amount: 100)``
+
+RichText Editor
+^^^^^^^^^^^^^^
+
+This feature create a rich text editor with various features that allow for
+text formatting. The features are:
+
+  * Bold: On/off style of bold text
+  * Italic: On/off style of italic text
+  * Underline: On/off style of underline text
+  * Choose font family: Choice from a combo box the desired font family
+  * Choose font size: Choice from a combo box the desired size font
+  * Text justify: Choice between four options for alignment of the line (left,
+    right, center, fill)
+  * Background color: Choose the background color of text from a color palette
+  * Foreground color: Choose the foreground color of text from a color palette
+
+Besides these features, it can change and edit text markup. The text markup
+feature has a similar HTML tags and is used to describe the format specified by
+the user and is a way of storing this format for future opening of a correct
+formatted text. The tags are explain follows:
+
+  * Bold: Tag `b` is used, i.e. <b>text</b>
+  * Italic: Tag `i` is used, i.e. <i>text</i>
+  * Underline: Tag `u` is used, i.e. <u>text</u>
+  * Font family: It is a attrbute `font-family` for `span` tag, i.e.
+    <span font-family="Arial">text</span>
+  * Font size: It is a attrbute `size` for `span` tag, i.e. <span size="12">
+    text</span>
+  * Text Justify: For justification text is used paragraph tag `p`. The
+    paragraph tag is used to create new lines and the alignment is applied
+    across the board. Example: <p align='center'>some text</p>
+  * Background color: It is a attrbute `background` for `span` tag, i.e.
+    <span background='#7f7f7f'>text</span>
+  * Foreground color: It is a attrbute `foreground` for `span` tag, i.e.
+    <span foreground='#00f'>text</span>
 
 Appendix
 ********
@@ -929,4 +877,5 @@ Configuration File
    ~/.config/tryton/x.y/accel.map        # Accelerators configuration
    ~/.config/tryton/x.y/known_hosts      # Fingerprints
    ~/.config/tryton/x.y/ca_certs         # Certification Authority (http://docs.python.org/library/ssl.html#ssl-certificates)
+   ~/.config/tryton/x.y/profiles.cfg     # Profile configuration
 
