@@ -1,17 +1,16 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
 import httplib
-import itertools
 import logging
 import socket
 import os
-from threading import Semaphore
 from functools import partial
-from tryton.jsonrpc import ServerProxy, Fault
+from tryton.jsonrpc import ServerProxy, ServerPool, Fault
 from tryton.fingerprints import Fingerprints
 from tryton.config import get_config_dir
 from tryton.ipc import Server as IPCServer
 from tryton.exceptions import TrytonServerError, TrytonServerUnavailable
+from tryton.config import CONFIG
 
 CONNECTION = None
 _USER = None
@@ -23,65 +22,70 @@ _DATABASE = ''
 CONTEXT = {}
 _VIEW_CACHE = {}
 _TOOLBAR_CACHE = {}
-TIMEZONE = 'utc'
-_SEMAPHORE = Semaphore()
+_KEYWORD_CACHE = {}
 _CA_CERTS = os.path.join(get_config_dir(), 'ca_certs')
 if not os.path.isfile(_CA_CERTS):
     _CA_CERTS = None
 _FINGERPRINTS = Fingerprints()
 
-ServerProxy = partial(ServerProxy, fingerprints=_FINGERPRINTS, ca_certs=_CA_CERTS)
+ServerProxy = partial(ServerProxy, fingerprints=_FINGERPRINTS,
+    ca_certs=_CA_CERTS)
+ServerPool = partial(ServerPool, fingerprints=_FINGERPRINTS,
+    ca_certs=_CA_CERTS)
+
 
 def db_list(host, port):
     try:
         connection = ServerProxy(host, port)
-        logging.getLogger('rpc.request').info('common.db.list(None, None)')
+        logging.getLogger(__name__).info('common.db.list(None, None)')
         result = connection.common.db.list(None, None)
-        logging.getLogger('rpc.result').debug(repr(result))
+        logging.getLogger(__name__).debug(repr(result))
         return result
     except Fault, exception:
         if exception.faultCode == 'AccessDenied':
-            raise
+            logging.getLogger(__name__).debug(-2)
+            return -2
         else:
-            logging.getLogger('rpc.result').debug(repr(None))
+            logging.getLogger(__name__).debug(repr(None))
             return None
+
 
 def db_exec(host, port, method, *args):
     connection = ServerProxy(host, port)
-    logging.getLogger('rpc.request').info('common.db.%s(None, None, %s)' %
+    logging.getLogger(__name__).info('common.db.%s(None, None, %s)' %
         (method, args))
     result = getattr(connection.common.db, method)(None, None, *args)
-    logging.getLogger('rpc.result').debug(repr(result))
+    logging.getLogger(__name__).debug(repr(result))
     return result
+
 
 def server_version(host, port):
     try:
         connection = ServerProxy(host, port)
-        logging.getLogger('rpc.request').info(
+        logging.getLogger(__name__).info(
             'common.server.version(None, None)')
         result = connection.common.server.version(None, None)
-        logging.getLogger('rpc.result').debug(repr(result))
+        logging.getLogger(__name__).debug(repr(result))
         return result
     except (Fault, socket.error):
         raise
 
+
 def login(username, password, host, port, database):
-    global CONNECTION, _USER, _USERNAME, _SESSION, _HOST, _PORT, _DATABASE, _VIEW_CACHE
-    global _TOOLBAR_CACHE
+    global CONNECTION, _USER, _USERNAME, _SESSION, _HOST, _PORT, _DATABASE
+    global _VIEW_CACHE, _TOOLBAR_CACHE, _KEYWORD_CACHE
     _VIEW_CACHE = {}
     _TOOLBAR_CACHE = {}
+    _KEYWORD_CACHE = {}
     try:
-        _SEMAPHORE.acquire()
-        try:
-            if CONNECTION is not None:
-                CONNECTION.close()
-            CONNECTION = ServerProxy(host, port, database)
-            logging.getLogger('rpc.request').info('common.db.login(%s, %s)' %
-                (username, 'x' * 10))
-            result = CONNECTION.common.db.login(username, password)
-            logging.getLogger('rpc.result').debug(repr(result))
-        finally:
-            _SEMAPHORE.release()
+        if CONNECTION is not None:
+            CONNECTION.close()
+        CONNECTION = ServerPool(host, port, database)
+        logging.getLogger(__name__).info('common.db.login(%s, %s)' %
+            (username, 'x' * 10))
+        with CONNECTION() as conn:
+            result = conn.common.db.login(username, password)
+        logging.getLogger(__name__).debug(repr(result))
     except socket.error:
         _USER = None
         _SESSION = ''
@@ -99,21 +103,20 @@ def login(username, password, host, port, database):
     IPCServer(host, port, database).run()
     return 1
 
+
 def logout():
-    global CONNECTION, _USER, _USERNAME, _SESSION, _HOST, _PORT, _DATABASE, _VIEW_CACHE
-    global _TOOLBAR_CACHE
+    global CONNECTION, _USER, _USERNAME, _SESSION, _HOST, _PORT, _DATABASE
+    global _VIEW_CACHE, _TOOLBAR_CACHE, _KEYWORD_CACHE
     if IPCServer.instance:
         IPCServer.instance.stop()
     if CONNECTION is not None:
-        _SEMAPHORE.acquire()
         try:
-            logging.getLogger('rpc.request').info('common.db.logout(%s, %s)' %
+            logging.getLogger(__name__).info('common.db.logout(%s, %s)' %
                 (_USER, _SESSION))
-            CONNECTION.common.db.logout(_USER, _SESSION)
+            with CONNECTION() as conn:
+                conn.common.db.logout(_USER, _SESSION)
         except (Fault, socket.error, httplib.CannotSendRequest):
             pass
-        finally:
-            _SEMAPHORE.release()
         CONNECTION.close()
         CONNECTION = None
     _USER = None
@@ -124,70 +127,61 @@ def logout():
     _DATABASE = ''
     _VIEW_CACHE = {}
     _TOOLBAR_CACHE = {}
+    _KEYWORD_CACHE = {}
+
 
 def context_reload():
-    global CONTEXT, TIMEZONE, _HOST, _PORT
+    global CONTEXT
     try:
         context = execute('model', 'res.user', 'get_preferences', True, {})
     except Fault:
         return
     CONTEXT = {}
-    for i in context:
-        value = context[i]
-        CONTEXT[i] = value
-        if i == 'timezone':
-            try:
-                connection = ServerProxy(_HOST, _PORT)
-                TIMEZONE = connection.common.server.timezone_get(None, None)
-            except Fault:
-                pass
+    CONTEXT.update(context)
+
 
 def _execute(blocking, *args):
     global CONNECTION, _USER, _SESSION
     if CONNECTION is None:
         raise TrytonServerError('NotLogged')
     key = False
+    model = args[1]
     method = args[2]
-    if method == 'fields_view_get':
-        args, ctx = args[:-1], args[-1]
-        # Make sure all the arguments are present
-        args = tuple(arg if arg is not None else default
-            for arg, default in itertools.izip_longest(args,
-                ('', '', 'fields_view_get', None, 'form'),
-                fillvalue=None))
-        key = str(args + (ctx,))
-        if key in _VIEW_CACHE and _VIEW_CACHE[key][0]:
-            args += (_VIEW_CACHE[key][0], ctx)
-        else:
-            args += (ctx,)
-    elif method == 'view_toolbar_get':
-        key = str(args)
-        if key in _TOOLBAR_CACHE:
-            return _TOOLBAR_CACHE[key]
-    res = _SEMAPHORE.acquire(blocking)
-    if not res:
-        return
+    if not CONFIG['dev']:
+        if method == 'fields_view_get':
+            key = str(args)
+            if key in _VIEW_CACHE:
+                return _VIEW_CACHE[key]
+        elif method == 'view_toolbar_get':
+            key = str(args)
+            if key in _TOOLBAR_CACHE:
+                return _TOOLBAR_CACHE[key]
+        elif model == 'ir.action.keyword' and method == 'get_keyword':
+            key = str(args)
+            if key in _KEYWORD_CACHE:
+                return _KEYWORD_CACHE[key]
     try:
         name = '.'.join(args[:3])
         args = (_USER, _SESSION) + args[3:]
-        logging.getLogger('rpc.request').info('%s%s' % (name, args))
-        result = getattr(CONNECTION, name)(*args)
+        logging.getLogger(__name__).info('%s%s' % (name, args))
+        with CONNECTION() as conn:
+            result = getattr(conn, name)(*args)
     except (httplib.CannotSendRequest, socket.error), exception:
         raise TrytonServerUnavailable(*exception.args)
-    finally:
-        _SEMAPHORE.release()
-    if key and method == 'fields_view_get':
-        if result is True and key in _VIEW_CACHE:
-            result = _VIEW_CACHE[key][1]
-        else:
-            _VIEW_CACHE[key] = (result['md5'], result)
-    elif key and method == 'view_toolbar_get':
-        _TOOLBAR_CACHE[key] = result
-    logging.getLogger('rpc.result').debug(repr(result))
+    if not CONFIG['dev']:
+        if key and method == 'fields_view_get':
+            _VIEW_CACHE[key] = result
+        elif key and method == 'view_toolbar_get':
+            _TOOLBAR_CACHE[key] = result
+        elif key and model == 'ir.action.keyword' and method == 'get_keyword':
+            _KEYWORD_CACHE[key] = result
+    logging.getLogger(__name__).debug(repr(result))
     return result
+
 
 def execute(*args):
     return _execute(True, *args)
+
 
 def execute_nonblocking(*args):
     return _execute(False, *args)

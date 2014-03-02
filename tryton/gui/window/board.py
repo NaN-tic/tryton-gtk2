@@ -2,14 +2,10 @@
 #this repository contains the full copyright notices and license terms.
 "Board"
 import gettext
-import gtk
-from tryton.config import CONFIG
 from tryton.signal_event import SignalEvent
 from tryton.gui import Main
-import tryton.rpc as rpc
 from tryton.gui.window.view_board import ViewBoard
-import tryton.common as common
-from tryton.exceptions import TrytonServerError
+from tryton.common import RPCExecute, RPCException
 
 from tabcontent import TabContent
 
@@ -36,6 +32,7 @@ class Board(SignalEvent, TabContent):
         (_('_Reload/Undo'), 'tryton-refresh', 'sig_reload',
             '<tryton>/Form/Reload'),
         (_('_Delete...'), 'tryton-delete', None, '<tryton>/Form/Delete'),
+        (None,) * 4,
         (_('_Close Tab'), 'tryton-close', 'sig_win_close',
             '<tryton>/Form/Close'),
     ]
@@ -45,10 +42,9 @@ class Board(SignalEvent, TabContent):
         super(Board, self).__init__()
 
         try:
-            view = rpc.execute('model', 'ir.ui.view', 'read',
-                    view_id, ['arch'], context)
-        except TrytonServerError, exception:
-            common.process_exception(exception)
+            view, = RPCExecute('model', 'ir.ui.view', 'read',
+                [view_id], ['arch'], context=context)
+        except RPCException:
             raise
 
         self.board = ViewBoard(view['arch'], context=context)
@@ -90,3 +86,11 @@ class Board(SignalEvent, TabContent):
 
     def sig_win_close(self, widget):
         Main.get_main().sig_win_close(widget)
+
+    def set_cursor(self):
+        if not self.board.widgets:
+            return
+        first_widget = self.board.widgets[0]
+        # only Actions are added to self.board.widgets, so no need to test
+        # further
+        first_widget.screen.set_cursor()

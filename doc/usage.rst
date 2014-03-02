@@ -35,11 +35,12 @@ Options
 
 -c FILE, --config=FILE               Specify alternate `configuration file`_
 
+-d, --dev                            Enable development mode, which deactivates
+                                     client side caching
+
 -v, --verbose                        Enable basic debugging
 
--d LOG_LOGGER, --log=LOG_LOGGER      Specify channels to log (ex: rpc.request, rpc.result, ...)
-
--l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: INFO, DEBUG,
+-l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: DEBUG, INFO,
                                      WARNING, ERROR, CRITICAL
 
 -u LOGIN, --user=LOGIN               Specify the login user
@@ -83,7 +84,7 @@ Figure: Tryton client application::
   Client Window       ________________________________________________________________
                      |                      Tryton                               _ o x|
                      |----------------------------------------------------------------|
-  Menu bar           | File User Options Plugins Shortcuts Help                       |
+  Menu bar           | File User Options Favorites Help                               |
                      |________________________________________________________________|
                      |             |          ______                                  |
   Tabs               | Menu        |  [Tab1] |[Tab2]| [Tab3]...                       |
@@ -92,8 +93,8 @@ Figure: Tryton client application::
                      | |-+         | |-----------------------------------------------||
   Tool bar           | | |-        | | New Save Switch Reload | Prev Next | Attach v ||
                      | | |-        | |-----------------------------------------------||
-                     | +           | |        ____________________                   ||
-  Search widget      | |-+         | | Search |                   | <- -> Find Clear ||
+                     | +           | |        _______________________                ||
+  Search widget      | |-+         | | Filter |                    *| Bookmark <- -> ||
                      | | |-        | |-----------------------------------------------||
                      | | |-        | |                                               ||
                      | +           | |                                               ||
@@ -104,10 +105,8 @@ Figure: Tryton client application::
                      |             | |                                               ||
                      |             | |                                               ||
                      |             | |                                               ||
-                     |             | |                                               ||
-                     |_____________| |_______________________________________________||
-                     |________________________________________________________________|
-  Status bar         |username company           Waiting requests...         login@...|
+                     |             | |______________________________________________ ||
+  URL                |_____________| |tryton://______________________________________||
                      |________________________________________________________________|
 
 
@@ -187,30 +186,6 @@ usually an item of the `Menu`_ opening when the user calls his
 __ Menu-User-Home_
 
 __ Menu-User-Preferences_
-
-
-Status bar
-++++++++++
-The status bar provides general informations of the state of the
-Tryton client. It is divided in three parts.
-
-* On its left side the real name and company name of the users actual company
-  is shown.
-* In the center of the status bar the number of waiting requests for the
-  actual user are displayed.
-* On its right side are details of the server connection shown including
-  database and user informations if connected. It is also noted there, if
-  there is no connection to a Tryton server at all. The right side information
-  of the status bar is build with the following pattern::
-
-    <user-name>@<tryton-server-address>:<port>/<database-name>
-
-  If the client is connected to the server with an SSL-secured connection, an
-  additional lock icon appears rightmost some certificate details in a mouse
-  hover popup.
-
-The Status bar can be enabled and disabled in the menu at
-Options > Form > Status bar
 
 
 Menu Bar Items
@@ -395,8 +370,7 @@ Server (connection) dialog:
 
 User
 ^^^^
-This menu bar item controls the preferences of the actual user and connects
-to the *request system* in Tryton.
+This menu bar item controls the preferences of the actual user.
 
 .. _Menu-User-Preferences:
 
@@ -431,64 +405,6 @@ Menu Toggle:
 
 Home:
   Opens a new `Home`__ tab.
-
-.. _Menu-User-send-a-request:
-
-Send a Request
-  Opens a tab in :term:`form view` which enables the user to send
-  requests to other users of the same database.
-
-.. _Menu-User-read-my-request:
-
-Read my Requests
-  Opens a tab in :term:`tree view` showing all requests related to the
-  actual user. Fields and actions of requests:
-
-  * On top
-
-    - From: User name of the sender
-    - To: User name of the request recipient
-    - References: Count of the attached references
-    - Subject: The subject of the request.
-    - Priority: An importance priority of the request.
-
-      + High
-      + Low
-      + Normal
-
-  * *Request* tab
-
-    - Body: The textual part of the request.
-    - History: The history of past replies to this request.
-
-      + From: Sender of the past request
-      + To: Receiver of the past request
-      + Summary: Summary of the body text of the past request.
-
-  * Trigger Date: Defines time and date when the request will be sent
-    automatically.
-  * State: State of the request. Possible states for the request are:
-
-    - Draft: The request is saved in the system, but not posted.
-    - Waiting: The request is sent without receiving a reply message.
-    - Chatting: The message is replied or in discussion.
-    - Closed: The message is closed/fulfilled/answered.
-
-  * Actions:
-
-    - Send: Sends the actual message
-    - Reply: Replies or answers the actual message
-    - close: Closes the actual message
-
-  * *References* tab
-
-    - References
-
-      + Reference: The reference type
-      + (Target): Defines an reference attached to the request.
-
-.. note:: When talking about requests, think of an internal system of
-   Tryton, which is very similar to email.
 
 
 Options
@@ -538,8 +454,7 @@ Normal:
 .. _Menu-Options-Mode_PDA:
 
 PDA:
-  Shows the client in a condensed mode. The PDA (Personal Data Assistant) mode
-  hides the shortcut menu in tree views and the system status bar.
+  Shows the client in a condensed mode.
 
 Form
 ++++
@@ -548,11 +463,6 @@ Form
 
 Toolbar:
   Checkbox to disable/enable the tool bar.
-
-.. _Menu-Options-Form-Statusbar:
-
-Statusbar:
-  Checkbox to disable/enable the status bar.
 
 .. _Menu-Options-Form-Save_Columns_Width:
 
@@ -580,24 +490,6 @@ Tabs Position
   * Left
   * Right
   * Bottom
-
-.. _Menu-Options-File_Actions:
-
-File Actions...:
-  Opens a dialog to set up file types for print and open actions.
-  Use ``"%s"`` as a placeholder for the document name.
-
-  * Provided file types:
-
-    - ODT file: Open Office Writer Document
-    - PDF file: Adobes(TM) Portable Document Format
-    - PNG file: Portable Network Graphics format
-    - TXT file: Pure text file
-
-  * Provided actions
-
-    - Open: Setting up program system call which opens the specific file type.
-    - Print: Setting up program system call printing the specific file type.
 
 .. _Menu-Options-Email:
 
@@ -629,27 +521,9 @@ Save Options:
   Saves all the options.
 
 
-Plug-ins
-^^^^^^^^
-Plug-ins are client side add-ons for Tryton. There are some included plug-ins
-with the standard client.
-
-Execute a Plug-in
-+++++++++++++++++
-Translate View:
-  Creates a translation table of the current view.
-
-Print Workflow:
-  Creates a graph which shows the work flow of the current view.
-
-Print Workflow (complex):
-  Like 'Print Workflow', with additional sub work flows inherited by the
-  current view.
-
-
-Shortcuts
+Favorites
 ^^^^^^^^^
-A collection of user defined shortcuts for specific resources.
+A collection of user defined menu favorites.
 
 
 Help
@@ -681,7 +555,6 @@ About...:
 Tool Bar
 ********
 The tool bar contains the functionalities linked to the current tab.
-The tool bar contains functions for the current tab.
 Some operations are working with one record or with a selection of
 :term:`records`. In :term:`form view` the actual record is selected for
 operations. In :term:`tree view` all selected records are used for operations.
@@ -696,72 +569,6 @@ New:
 Save:
   Saves the actual record.
 
-.. _Toolbar-Duplicate:
-
-Duplicate:
-  Duplicates the content of the actual record in a newly created record.
-
-.. _Toolbar-Delete:
-
-Delete:
-  Deletes the selected or actual record.
-
-.. _Toolbar-Find:
-
-.. _search_widget:
-
-Find...:
-  Opens a :term:`dialog` for finding :term:`fields` with search criteria and
-  operators.
-
-  * Search criteria: Defines the aspects to seek for.
-  * General search operators:
-
-    - Equals: Search for results which are exactly the same as the following
-      term.
-    - Does Not Equal: Search for results which are different from the following
-      term.
-
-  * Additional search operators on numbers, amounts and strings:
-
-    - Contains: Search for results which contain the following term.
-    - Does Not Contain:  Search for results which do not include the
-      following term.
-    - Starts With: Search for results beginning with the following term.
-    - Ends With: Search for results ending with the following term.
-
-  * Additional search operators for numbers and amounts:
-
-    - Is Between: Search for results inside a range (from - to).
-    - Is Not Between: Search for results outside a range (from - to).
-    - Is Different: Same as 'Does Not Equal', see above.
-
-  * Advanced Search expander opens additional search criteria.
-
-    - Limit: Limits the count of results.
-    - Offset: Skips a number of results and show only the following.
-
-  * Actions:
-
-    - Find: Search for results of the given criteria.
-    - New: Create a new record (used when search was fruitless, to create
-      quickly a new record).
-    - Ok: Open the selected results.
-    - Cancel
-
-.. note:: To search for deactivated records the *Active* search criteria must be
-        set to *No*.
-
-.. _Toolbar-Next:
-
-Next:
-  Goes to the next record in a list (sequence).
-
-.. _Toolbar-Previous:
-
-Previous:
-  Goes to the last record in a list (sequence).
-
 .. _Toolbar-Switch_View:
 
 Switch View:
@@ -773,21 +580,36 @@ Switch View:
 
   Not all views provide all aspects.
 
-.. _Toolbar-Close:
+.. _Toolbar-Reload_Undo:
 
-Close Tab:
-  Closes the current tab. A Request :term:`Dialog` opens in case of unsaved
-  changes.
+Reload/Undo:
+  Reloads the content of the actual tab. Undoes changes, if save request for
+  the current record is denied.
 
-.. _Toolbar-Previous_Tab:
+.. _Toolbar-Duplicate:
 
-Previous Tab:
-  Shows the previous (left) tab of the actual tab.
+Duplicate:
+  Duplicates the content of the actual record in a newly created record.
 
-.. _Toolbar-Next_Tab:
+.. _Toolbar-Delete:
 
-Next Tab:
-  Shows the next (right) tab of the actual tab.
+Delete:
+  Deletes the selected or actual record.
+
+.. _Toolbar-Previous:
+
+Previous:
+  Goes to the last record in a list (sequence).
+
+.. _Toolbar-Next:
+
+Next:
+  Goes to the next record in a list (sequence).
+
+.. _Toolbar-Search:
+
+Search:
+    Goes to the search widget.
 
 .. _Toolbar-View_Logs:
 
@@ -799,16 +621,39 @@ View Logs...:
 Go to Record ID...:
   Opens specific record id in the current view.
 
-.. _Toolbar-Reload_Undo:
+.. _Toolbar-Close:
 
-Reload/Undo:
-  Reloads the content of the actual tab. Undoes changes, if save request for
-  the current record is denied.
+Close Tab:
+  Closes the current tab. A Request :term:`Dialog` opens in case of unsaved
+  changes.
+
+.. _Toolbar-Attachment:
+
+Attachment:
+  The attachment item handles the document management system of
+  Tryton which is able to attach files to any arbitrary :term:`model`.
+  On click it opens the attachments :term:`dialog`. The default dialog
+  shows a list view of the attached files and links.
 
 .. _Toolbar-Actions:
 
 Actions...:
   Shows all actions for the actual view, model and record.
+
+.. _Toolbar-Relate:
+
+Relate...:
+  Shows all relate view for the actual view, model and record.
+
+.. _Toolbar-Report:
+
+Report...:
+  Shows all reports for the actual view, model and record.
+
+.. _Toolbar-Email:
+
+E-Mail...:
+  Shows all email reports for the actual view, model and record.
 
 .. _Toolbar-Print:
 
@@ -866,22 +711,35 @@ Import Data...:
     - Ok: Proceeds the data import.
     - Cancel
 
-.. _Toolbar-Attachment:
+Widgets
+*******
 
-Attachment:
-  The attachment item handles the document management system of
-  Tryton which is able to attach files to any arbitrary :term:`model`.
-  On click it opens the attachments :term:`dialog`. The default dialog
-  shows a list view of the attached files and links.
+There are a several widgets used on Tryton in client side. The follow sections
+will explains some of them.
+
+
+Date/DateTime/Time Widgets
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Those widgets has several key shortucts to quickly modify the value. Each key
+increases if lower case or decreases if upper case:
+
+    - `y`: by one year
+    - `m`: by one month
+    - `w`: by one week
+    - `d`: by one day
+    - `h`: by one hour
+    - `i`: by one minute
+    - `s`: by one second
 
 Search Widget
-*************
+^^^^^^^^^^^^^
 
 The search widget adds the ability to easily search for records on the current
 tab.  This widget is visible only on :term:`tree view`.
 
 The Syntax
-^^^^^^^^^^
+++++++++++
 
 A query is composed of search clauses.
 A clause is composed of a field name (with `:` at the end), an operator and a value.
@@ -891,7 +749,7 @@ the type of the field.  The default operator is `=` except for fields of type
 `char`, `text` and `many2one` which is `ilike`.
 
 Field Names
-^^^^^^^^^^^
++++++++++++
 
 All field names shown in the :term:`tree view` can be searched. Field names
 must be followed by a `:`
@@ -904,7 +762,7 @@ escape it using double quotes.
     For example: ``"Receivable Today":``
 
 Operators
-^^^^^^^^^
++++++++++
 
 The following operators can be used:
 
@@ -922,7 +780,7 @@ The following operators can be used:
     value to make it behaves like `starts with`
 
 Values
-^^^^^^
+++++++
 
 The format of the value depends on the type of the field.
 A list of values can be set using `;` as separator.
@@ -951,7 +809,7 @@ It is possible to escape special characters in values by using double quotes.
     Here it will search with the value `Michael:Scott`.
 
 Clause composition
-^^^^^^^^^^^^^^^^^^
+++++++++++++++++++
 
 The clauses can be composed using the two boolean operators `and` and `or`.
 By default, there is an implicit `and` between each clause if no operator is
@@ -969,6 +827,42 @@ using parenthesis.
     is different than ``Name: Michael or Name: Pam and Amount: 100``
 
     which is evaluated as ``Name: Michael or (Name: Pam and Amount: 100)``
+
+RichText Editor
+^^^^^^^^^^^^^^
+
+This feature create a rich text editor with various features that allow for
+text formatting. The features are:
+
+  * Bold: On/off style of bold text
+  * Italic: On/off style of italic text
+  * Underline: On/off style of underline text
+  * Choose font family: Choice from a combo box the desired font family
+  * Choose font size: Choice from a combo box the desired size font
+  * Text justify: Choice between four options for alignment of the line (left,
+    right, center, fill)
+  * Background color: Choose the background color of text from a color palette
+  * Foreground color: Choose the foreground color of text from a color palette
+
+Besides these features, it can change and edit text markup. The text markup
+feature has a similar HTML tags and is used to describe the format specified by
+the user and is a way of storing this format for future opening of a correct
+formatted text. The tags are explain follows:
+
+  * Bold: Tag `b` is used, i.e. <b>text</b>
+  * Italic: Tag `i` is used, i.e. <i>text</i>
+  * Underline: Tag `u` is used, i.e. <u>text</u>
+  * Font family: It is a attrbute `font-family` for `span` tag, i.e.
+    <span font-family="Arial">text</span>
+  * Font size: It is a attrbute `size` for `span` tag, i.e. <span size="12">
+    text</span>
+  * Text Justify: For justification text is used paragraph tag `p`. The
+    paragraph tag is used to create new lines and the alignment is applied
+    across the board. Example: <p align='center'>some text</p>
+  * Background color: It is a attrbute `background` for `span` tag, i.e.
+    <span background='#7f7f7f'>text</span>
+  * Foreground color: It is a attrbute `foreground` for `span` tag, i.e.
+    <span foreground='#00f'>text</span>
 
 Appendix
 ********

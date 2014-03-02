@@ -5,7 +5,7 @@ import glib
 import gettext
 import os
 import tempfile
-from tryton.common import file_selection, Tooltips, file_open
+from tryton.common import file_selection, Tooltips, file_open, slugify
 from tryton.config import PIXMAPS_DIR
 from interface import WidgetInterface
 import urllib
@@ -54,7 +54,8 @@ class Image(WidgetInterface):
             if self.filename:
                 self.but_open = gtk.Button()
                 img_open = gtk.Image()
-                img_open.set_from_stock('tryton-open', gtk.ICON_SIZE_SMALL_TOOLBAR)
+                img_open.set_from_stock('tryton-open',
+                    gtk.ICON_SIZE_SMALL_TOOLBAR)
                 self.but_open.set_image(img_open)
                 self.but_open.set_relief(gtk.RELIEF_NONE)
                 self.but_open.connect('clicked', self.sig_open)
@@ -65,7 +66,8 @@ class Image(WidgetInterface):
 
             self.but_save_as = gtk.Button()
             img_save_as = gtk.Image()
-            img_save_as.set_from_stock('tryton-save', gtk.ICON_SIZE_SMALL_TOOLBAR)
+            img_save_as.set_from_stock('tryton-save',
+                gtk.ICON_SIZE_SMALL_TOOLBAR)
             self.but_save_as.set_image(img_save_as)
             self.but_save_as.set_relief(gtk.RELIEF_NONE)
             self.but_save_as.connect('clicked', self.sig_save_as)
@@ -74,7 +76,8 @@ class Image(WidgetInterface):
 
             self.but_remove = gtk.Button()
             img_remove = gtk.Image()
-            img_remove.set_from_stock('tryton-clear', gtk.ICON_SIZE_SMALL_TOOLBAR)
+            img_remove.set_from_stock('tryton-clear',
+                gtk.ICON_SIZE_SMALL_TOOLBAR)
             self.but_remove.set_image(img_remove)
             self.but_remove.set_relief(gtk.RELIEF_NONE)
             self.but_remove.connect('clicked', self.sig_remove)
@@ -138,8 +141,11 @@ class Image(WidgetInterface):
         if not self.filename_field:
             return
         dtemp = tempfile.mkdtemp(prefix='tryton_')
-        filename = self.filename_field.get(self.record).replace(
-                os.sep, '_').replace(os.altsep or os.sep, '_')
+        filename = self.filename_field.get(self.record)
+        if not filename:
+            return
+        root, ext = os.path.splitext(filename)
+        filename = ''.join([slugify(root), os.extsep, slugify(ext)])
         file_path = os.path.join(dtemp, filename)
         with open(file_path, 'wb') as fp:
             fp.write(self.field.get_data(self.record))
@@ -193,7 +199,7 @@ class Image(WidgetInterface):
         if self.field:
             value = self.field.get_client(self.record)
         if isinstance(value, (int, long)):
-            if value > 10**6:
+            if value > 10 ** 6:
                 value = False
             else:
                 value = self.field.get_data(self.record)

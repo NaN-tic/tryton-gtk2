@@ -4,16 +4,11 @@ import gtk
 import gettext
 import os
 import tempfile
-from tryton.common import file_selection, message, warning, Tooltips, file_open
+from tryton.common import common
+from tryton.common import file_selection, Tooltips, file_open, slugify
 from interface import WidgetInterface
 
 _ = gettext.gettext
-
-def humanize(size):
-    for x in ('bytes', 'KB', 'MB', 'GB', 'TB', 'PB'):
-        if size < 1000:
-            return '%3.1f%s' % (size, x)
-        size /= 1000.0
 
 
 class Binary(WidgetInterface):
@@ -29,12 +24,13 @@ class Binary(WidgetInterface):
         self.widget = gtk.HBox(spacing=0)
         self.wid_size = gtk.Entry()
         self.wid_size.set_width_chars(10)
+        self.wid_size.set_alignment(1.0)
         self.wid_size.props.sensitive = False
         if self.filename and attrs.get('filename_visible'):
             self.wid_text = gtk.Entry()
             self.wid_text.set_property('activates_default', True)
-            self.wid_text.connect('focus-in-event', lambda x, y: self._focus_in())
-            self.wid_text.connect('focus-out-event', lambda x, y: self._focus_out())
+            self.wid_text.connect('focus-out-event',
+                lambda x, y: self._focus_out())
             self.wid_text.connect_after('key_press_event', self.sig_key_press)
             self.widget.pack_start(self.wid_text, expand=True, fill=True)
         else:
@@ -82,6 +78,8 @@ class Binary(WidgetInterface):
         self.tooltips.set_tip(self.but_remove, _('Clear'))
         self.widget.pack_start(self.but_remove, expand=False, fill=False)
 
+        self.last_open_file = None
+
         self.tooltips.enable()
 
     @property
@@ -112,27 +110,38 @@ class Binary(WidgetInterface):
             return self.wid_size.grab_focus()
 
     def sig_new(self, widget=None):
-        filename = file_selection(_('Open...'))
+        filename = ''
+        if self.last_open_file:
+            last_id, last_filename = self.last_open_file
+            if last_id == self.record.id:
+                filename = last_filename
+        filename = file_selection(_('Open...'), filename=filename)
         if filename and self.field:
             self.field.set_client(self.record, open(filename, 'rb').read())
             if self.filename_field:
                 self.filename_field.set_client(self.record,
                         os.path.basename(filename))
-            self.display(self.record, self.field)
 
     def sig_open(self, widget=None):
         if not self.filename_field:
             return
         dtemp = tempfile.mkdtemp(prefix='tryton_')
-        filename = self.filename_field.get(self.record).replace(
-                os.sep, '_').replace(os.altsep or os.sep, '_')
+        filename = self.filename_field.get(self.record)
+        if not filename:
+            return
+        root, ext = os.path.splitext(filename)
+        filename = ''.join([slugify(root), os.extsep, slugify(ext)])
         file_path = os.path.join(dtemp, filename)
         with open(file_path, 'wb') as fp:
-            fp.write(self.field.get_data(self.record))
+            if hasattr(self.field, 'get_data'):
+                fp.write(self.field.get_data(self.record))
+            else:
+                fp.write(self.field.get(self.record))
         root, type_ = os.path.splitext(filename)
         if type_:
             type_ = type_[1:]
         file_open(file_path, type_)
+        self.last_open_file = (self.record.id, file_path)
 
     def sig_save_as(self, widget=None):
         filename = ''
@@ -141,12 +150,14 @@ class Binary(WidgetInterface):
         filename = file_selection(_('Save As...'), filename=filename,
             action=gtk.FILE_CHOOSER_ACTION_SAVE)
         if filename:
-            with open(filename,'wb') as fp:
-                fp.write(self.field.get_data(self.record))
+            with open(filename, 'wb') as fp:
+                if hasattr(self.field, 'get_data'):
+                    fp.write(self.field.get_data(self.record))
+                else:
+                    fp.write(self.field.get(self.record))
 
     def sig_remove(self, widget=None):
         self.field.set_client(self.record, False)
-        self.display(self.record, self.field)
 
     def sig_key_press(self, widget, event, *args):
         editable = self.wid_text and self.wid_text.get_editable()
@@ -173,10 +184,14 @@ class Binary(WidgetInterface):
             return False
         if self.wid_text:
             self.wid_text.set_text(self.filename_field.get(record) or '')
-        self.wid_size.set_text(humanize(field.get_size(record) or 0))
+        if hasattr(field, 'get_size'):
+            size = field.get_size(record)
+        else:
+            size = len(field.get(record))
+        self.wid_size.set_text(common.humanize(size or 0))
         if self.but_open:
-            self.but_open.set_sensitive(bool(field.get_size(record)))
-        self.but_save_as.set_sensitive(bool(field.get_size(record)))
+            self.but_open.set_sensitive(bool(size))
+        self.but_save_as.set_sensitive(bool(size))
         return True
 
     def set_value(self, record, field):

@@ -4,24 +4,24 @@ import gtk
 import gobject
 import gettext
 import tryton.common as common
-import tryton.rpc as rpc
 import csv
 from tryton.config import TRYTON_ICON, CONFIG
-from tryton.exceptions import TrytonServerError
+from tryton.common import RPCExecute, RPCException
+from tryton.gui.window.nomodal import NoModal
 
 _ = gettext.gettext
 
 
-class WinImport(object):
+class WinImport(NoModal):
     "Window import"
 
-    def __init__(self, model):
-        self.parent = common.get_toplevel_window()
-        self.dialog = gtk.Dialog(
-                title=_("Import from CSV"), parent=self.parent,
-                flags=gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT
-                | gtk.WIN_POS_CENTER_ON_PARENT)
+    def __init__(self, model, context):
+        super(WinImport, self).__init__()
+        self.dialog = gtk.Dialog(title=_("Import from CSV"),
+            parent=self.parent, flags=gtk.DIALOG_DESTROY_WITH_PARENT)
+        self.dialog.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.dialog.set_icon(TRYTON_ICON)
+        self.dialog.connect('response', self.response)
 
         dialog_vbox = gtk.VBox()
         hbox_mapping = gtk.HBox(True)
@@ -45,29 +45,29 @@ class WinImport(object):
         hbox_mapping.pack_start(vbox_buttons, False, True, 0)
 
         button_add = gtk.Button(_("_Add"), stock=None, use_underline=True)
-        button_add.set_alignment(0.0,0.0)
+        button_add.set_alignment(0.0, 0.0)
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-list-add', gtk.ICON_SIZE_BUTTON)
         button_add.set_image(img_button)
-        button_add.connect_after('clicked',  self.sig_sel)
+        button_add.connect_after('clicked', self.sig_sel)
         vbox_buttons.pack_start(button_add, False, False, 0)
 
         button_remove = gtk.Button(_("_Remove"), stock=None,
                 use_underline=True)
-        button_remove.set_alignment(0.0,0.0)
+        button_remove.set_alignment(0.0, 0.0)
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-list-remove', gtk.ICON_SIZE_BUTTON)
         button_remove.set_image(img_button)
-        button_remove.connect_after('clicked',  self.sig_unsel)
+        button_remove.connect_after('clicked', self.sig_unsel)
         vbox_buttons.pack_start(button_remove, False, False, 0)
 
         button_remove_all = gtk.Button(_("Clear"), stock=None,
                 use_underline=True)
-        button_remove_all.set_alignment(0.0,0.0)
+        button_remove_all.set_alignment(0.0, 0.0)
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-clear', gtk.ICON_SIZE_BUTTON)
         button_remove_all.set_image(img_button)
-        button_remove_all.connect_after('clicked',  self.sig_unsel_all)
+        button_remove_all.connect_after('clicked', self.sig_unsel_all)
         vbox_buttons.pack_start(button_remove_all, False, False, 0)
 
         hseparator_buttons = gtk.HSeparator()
@@ -75,11 +75,11 @@ class WinImport(object):
 
         button_autodetect = gtk.Button(_("Auto-Detect"), stock=None,
                 use_underline=True)
-        button_autodetect.set_alignment(0.0,0.0)
+        button_autodetect.set_alignment(0.0, 0.0)
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-find', gtk.ICON_SIZE_BUTTON)
         button_autodetect.set_image(img_button)
-        button_autodetect.connect_after('clicked',  self.sig_autodetect)
+        button_autodetect.connect_after('clicked', self.sig_autodetect)
         vbox_buttons.pack_start(button_autodetect, False, False, 0)
 
         frame_import = gtk.Frame()
@@ -112,7 +112,6 @@ class WinImport(object):
         hbox_csv_import.pack_start(self.import_csv_file, True, True, 0)
 
         expander_csv_import = gtk.Expander(None)
-        expander_csv_import.set_expanded(True)
         vbox_csv_param.pack_start(expander_csv_import, False, True, 0)
         label_import_csv_param = gtk.Label(_("CSV Parameters"))
         expander_csv_import.set_label_widget(label_import_csv_param)
@@ -132,23 +131,24 @@ class WinImport(object):
         table.attach(self.import_csv_sep, 1, 2, 0, 1)
 
         label_import_csv_del = gtk.Label(_("Text Delimiter:"))
-        label_import_csv_del.set_alignment( 1, 0.5)
+        label_import_csv_del.set_alignment(1, 0.5)
         table.attach(label_import_csv_del, 2, 3, 0, 1)
         self.import_csv_del = gtk.Entry()
-        self.import_csv_del.set_text( "\"")
-        self.import_csv_del.set_width_chars( 1)
+        self.import_csv_del.set_text("\"")
+        self.import_csv_del.set_width_chars(1)
         table.attach(self.import_csv_del, 3, 4, 0, 1)
 
         label_import_csv_enc = gtk.Label(_("Encoding:"))
-        label_import_csv_enc.set_alignment( 1, 0.5)
+        label_import_csv_enc.set_alignment(1, 0.5)
         table.attach(label_import_csv_enc, 0, 1, 1, 2)
         self.import_csv_enc = gtk.combo_box_new_text()
         self.import_csv_enc.append_text("UTF-8")
         self.import_csv_enc.append_text("Latin1")
+        self.import_csv_enc.set_active(0)
         table.attach(self.import_csv_enc, 1, 2, 1, 2)
 
         label_import_csv_skip = gtk.Label(_("Lines to Skip:"))
-        label_import_csv_skip.set_alignment( 1, 0.5)
+        label_import_csv_skip.set_alignment(1, 0.5)
         table.attach(label_import_csv_skip, 2, 3, 1, 2)
 
         self.import_csv_skip_adj = gtk.Adjustment(0, 0, 100, 1, 10)
@@ -166,9 +166,9 @@ class WinImport(object):
         self.dialog.vbox.pack_start(dialog_vbox)
 
         self.model = model
+        self.context = context
         self.fields_data = {}
 
-        self.dialog.show_all()
         self.import_csv_file.set_current_folder(CONFIG['client.default_path'])
 
         self.view1 = gtk.TreeView()
@@ -201,8 +201,14 @@ class WinImport(object):
 
         self.view1.set_model(self.model1)
         self.view2.set_model(self.model2)
-        self.view1.show_all()
-        self.view2.show_all()
+
+        sensible_allocation = self.sensible_widget.get_allocation()
+        self.dialog.set_default_size(int(sensible_allocation.width * 0.9),
+            int(sensible_allocation.height * 0.9))
+        self.dialog.show_all()
+        common.center_window(self.dialog, self.parent, self.sensible_widget)
+
+        self.register()
 
     def model_populate(self, fields, parent_node=None, prefix_field='',
             prefix_name=''):
@@ -224,11 +230,11 @@ class WinImport(object):
                     self.model1.insert(node, 0, [None, '', 'white'])
 
     def _get_fields(self, model):
-        args = ('model', model, 'fields_get', None, rpc.CONTEXT)
         try:
-            return rpc.execute(*args)
-        except TrytonServerError, exception:
-            return common.process_exception(exception, *args)
+            return RPCExecute('model', model, 'fields_get', None,
+                context=self.context)
+        except RPCException:
+            return ''
 
     def on_row_expanded(self, treeview, iter, path):
         child = self.model1.iter_children(iter)
@@ -244,10 +250,9 @@ class WinImport(object):
         if not fname:
             common.message(_('You must select an import file first!'))
             return True
-        csvsep = self.import_csv_sep.get_text()
-        csvdel = self.import_csv_del.get_text()
-        csvcode = self.import_csv_enc.get_active_text() \
-                or 'UTF-8'
+        csvsep = self.import_csv_sep.get_text() or None
+        csvdel = self.import_csv_del.get_text() or None
+        csvcode = self.import_csv_enc.get_active_text() or 'UTF-8'
 
         self.import_csv_skip.set_value(1)
         try:
@@ -264,7 +269,6 @@ class WinImport(object):
                 if word not in self.fields_invert and word not in self.fields:
                     iter = self.model1.get_iter_first()
                     prefix = ''
-                    prefix_name = ''
                     for parent in word.split('/')[:-1]:
                         while iter:
                             if self.model1.get_value(iter, 0) == parent or \
@@ -297,7 +301,7 @@ class WinImport(object):
     def _sig_sel_add(self, store, path, iter):
         num = self.model2.append()
         name = self.fields[store.get_value(iter, 1)][0]
-        self.model2.set(num, 0, name, 1, store.get_value(iter,1))
+        self.model2.set(num, 0, name, 1, store.get_value(iter, 1))
 
     def sig_unsel(self, widget=None):
         store, paths = self.view2.get_selection().get_selected_rows()
@@ -308,9 +312,18 @@ class WinImport(object):
     def sig_unsel_all(self, widget=None):
         self.model2.clear()
 
-    def run(self):
-        button = self.dialog.run()
-        if button == gtk.RESPONSE_OK:
+    def destroy(self):
+        super(WinImport, self).destroy()
+        self.dialog.destroy()
+
+    def show(self):
+        self.dialog.show()
+
+    def hide(self):
+        self.dialog.hide()
+
+    def response(self, dialog, response):
+        if response == gtk.RESPONSE_OK:
             fields = []
             iter = self.model2.get_iter_root()
             while iter:
@@ -324,14 +337,12 @@ class WinImport(object):
                 'skip': self.import_csv_skip.get_value(),
                 'combo': self.import_csv_enc.get_active_text() or 'UTF-8'
             }
-            self.parent.present()
-            self.dialog.destroy()
+            self.destroy()
             if csv_data['fname']:
                 return self.import_csv(csv_data, fields, self.model)
             return False
         else:
-            self.parent.present()
-            self.dialog.destroy()
+            self.destroy()
             return False
 
     def import_csv(self, csv_data, fields, model):
@@ -344,13 +355,12 @@ class WinImport(object):
         for line in data:
             if not line:
                 continue
-            datas.append([x.decode(csv_data['combo']).encode('utf-8') \
+            datas.append([x.decode(csv_data['combo']).encode('utf-8')
                     for x in line])
         try:
-            res = rpc.execute('model', model, 'import_data', fields, datas,
-                    rpc.CONTEXT)
-        except TrytonServerError, exception:
-            common.process_exception(exception)
+            res = RPCExecute('model', model, 'import_data', fields, datas,
+                context=self.context)
+        except RPCException:
             return False
         if res[0] >= 0:
             if res[0] == 1:
@@ -362,6 +372,7 @@ class WinImport(object):
             for key, val in res[1].items():
                 buf += ('\t%s: %s\n' % (str(key), str(val)))
             common.error(_('Importation Error!'),
-                    _('Error trying to import this record:\n' \
-                    '%s\nError Message:\n%s\n\n%s') % (buf, res[2], res[3]))
+                _('Error importing record %(record)s\n'
+                    '%(error_title)s\n\n%(traceback)s') %
+                {'record': buf, 'error_title': res[2], 'traceback': res[3]})
         return True

@@ -5,10 +5,7 @@ import ConfigParser
 import gtk
 import gobject
 import os
-import re
 import gettext
-import threading
-import time
 
 from tryton.version import VERSION
 import tryton.common as common
@@ -32,8 +29,9 @@ class DBListEditor(object):
         # GTK Stuffs
         self.parent = parent
         self.dialog = gtk.Dialog(title=_(u'Profile Editor'), parent=parent,
-            flags=gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT)
-        self.ok_button = self.dialog.add_button(gtk.STOCK_OK, gtk.RESPONSE_ACCEPT)
+            flags=gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
+        self.ok_button = self.dialog.add_button(gtk.STOCK_OK,
+            gtk.RESPONSE_ACCEPT)
         self.dialog.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.dialog.set_has_separator(True)
         self.dialog.set_icon(TRYTON_ICON)
@@ -93,7 +91,8 @@ class DBListEditor(object):
         database.set_padding(3, 3)
         self.database_entry = gtk.Entry()
         self.database_entry.connect('changed', self.dbentry_changed)
-        self.database_entry.connect('changed', self.update_profiles, 'database')
+        self.database_entry.connect('changed', self.update_profiles,
+            'database')
         self.database_entry.set_activates_default(True)
         self.database_label = gtk.Label()
         self.database_label.set_use_markup(True)
@@ -107,7 +106,7 @@ class DBListEditor(object):
         self.database_combo.connect('changed', self.dbcombo_changed)
         self.database_button = gtk.Button(_(u'Create'))
         self.database_button.connect('clicked', self.db_create)
-        self.database_progressbar= gtk.ProgressBar()
+        self.database_progressbar = gtk.ProgressBar()
         self.database_progressbar.set_text(_(u'Fetching databases list'))
         image = gtk.Image()
         image.set_from_stock('tryton-new', gtk.ICON_SIZE_BUTTON)
@@ -130,7 +129,8 @@ class DBListEditor(object):
         username.set_alignment(1, 0.5)
         username.set_padding(3, 3)
         self.username_entry = gtk.Entry()
-        self.username_entry.connect('changed', self.update_profiles, 'username')
+        self.username_entry.connect('changed', self.update_profiles,
+            'username')
         self.username_entry.set_activates_default(True)
         table.attach(username, 0, 1, 4, 5, yoptions=False, xoptions=gtk.FILL)
         table.attach(self.username_entry, 1, 2, 4, 5, yoptions=False)
@@ -194,10 +194,10 @@ class DBListEditor(object):
     def profile_create(self, button):
         self.clear_entries()
         model = self.profile_tree.get_model()
-        selection = self.profile_tree.get_selection()
         model.append(['', False])
         column = self.profile_tree.get_column(0)
-        self.profile_tree.set_cursor(len(model)-1, column, start_editing=True)
+        self.profile_tree.set_cursor(len(model) - 1, column,
+            start_editing=True)
 
     def profile_delete(self, button):
         self.clear_entries()
@@ -299,13 +299,11 @@ class DBListEditor(object):
         self.port_entry.set_sensitive(False)
         self.updating_db = True
 
-        def callback(dbs, createdb):
+        def callback(dbs):
             self.updating_db = False
             self.db_cache = (host, port, self.current_profile['name'])
 
-            if dbs is None and createdb is None:
-                pass
-            elif dbs is None or dbs == -1:
+            if dbs is None or dbs == -1:
                 if dbs is None:
                     label = _(u'Could not connect to the server')
                 else:
@@ -313,10 +311,9 @@ class DBListEditor(object):
                 self.database_label.set_label('<b>%s</b>' % label)
                 self.database_label.show()
             elif dbs == 0:
-                if createdb:
-                    self.database_button.show()
-                else:
-                    self.database_entry.show()
+                self.database_button.show()
+            elif dbs == -2:
+                self.database_entry.show()
             else:
                 self.database_entry.set_text(dbname if dbname else '')
                 self.database_combo.show()
@@ -371,7 +368,7 @@ class DBLogin(object):
         # GTK Stuffs
         self.parent = common.get_toplevel_window()
         self.dialog = gtk.Dialog(title=_('Login'), parent=self.parent,
-            flags=gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT)
+            flags=gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
         self.dialog.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.dialog.set_has_separator(True)
         self.dialog.set_icon(TRYTON_ICON)
@@ -401,8 +398,7 @@ class DBLogin(object):
         self.dialog.vbox.pack_start(alignment, True, True, 0)
 
         image = gtk.Image()
-        image.set_from_file(os.path.join(PIXMAPS_DIR,
-            'tryton.png').decode('utf-8'))
+        image.set_from_file(os.path.join(PIXMAPS_DIR, 'tryton.png'))
         image.set_alignment(0.5, 1)
         ebox = gtk.EventBox()
         ebox.modify_bg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#1b2019"))
@@ -440,7 +436,8 @@ class DBLogin(object):
         self.label_host.set_alignment(1, 0.5)
         self.label_host.set_padding(3, 3)
         self.entry_host = gtk.Entry()
-        self.entry_host.connect_after('focus-out-event', self.clear_profile_combo)
+        self.entry_host.connect_after('focus-out-event',
+            self.clear_profile_combo)
         self.entry_host.set_activates_default(True)
         self.table_main.attach(self.label_host, 0, 1, 4, 5, xoptions=gtk.FILL)
         self.table_main.attach(self.entry_host, 1, 3, 4, 5)
@@ -449,7 +446,8 @@ class DBLogin(object):
         self.label_database.set_alignment(1, 0.5)
         self.label_database.set_padding(3, 3)
         self.entry_database = gtk.Entry()
-        self.entry_database.connect_after('focus-out-event', self.clear_profile_combo)
+        self.entry_database.connect_after('focus-out-event',
+            self.clear_profile_combo)
         self.entry_database.set_activates_default(True)
         self.table_main.attach(self.label_database, 0, 1, 5, 6,
             xoptions=gtk.FILL)
@@ -461,12 +459,12 @@ class DBLogin(object):
         self.entry_login = gtk.Entry()
         self.entry_login.set_activates_default(True)
         self.table_main.attach(self.entry_login, 1, 3, 6, 7)
-        label_password = gtk.Label(str = _("Password:"))
+        label_password = gtk.Label(str=_("Password:"))
         label_password.set_justify(gtk.JUSTIFY_RIGHT)
         label_password.set_alignment(1, 0.5)
         label_password.set_padding(3, 3)
         self.table_main.attach(label_password, 0, 1, 7, 8, xoptions=gtk.FILL)
-        label_username = gtk.Label(str = _("User name:"))
+        label_username = gtk.Label(str=_("User name:"))
         label_username.set_alignment(1, 0.5)
         label_username.set_padding(3, 3)
         self.table_main.attach(label_username, 0, 1, 6, 7, xoptions=gtk.FILL)
@@ -578,8 +576,8 @@ class DBLogin(object):
         if can_use_profile:
             for (configname, sectionname) in (('login.server', 'host'),
                     ('login.port', 'port'), ('login.db', 'database')):
-                if (self.profiles.get(profile_name, sectionname) != \
-                        CONFIG[configname]):
+                if (self.profiles.get(profile_name, sectionname)
+                        != CONFIG[configname]):
                     can_use_profile = False
                     break
 
@@ -627,13 +625,10 @@ class DBLogin(object):
                 port = self.get_port(netloc)
             except ValueError:
                 continue
-            if ':' in host:
-                hostname = '[%s]' % host
-            else:
-                hostname = host
             try:
                 if not common.test_server_version(host, port):
-                    common.warning('', _(u'Incompatible version of the server'))
+                    common.warning('',
+                        _(u'Incompatible version of the server'))
                     continue
             except Exception, exception:
                 common.process_exception(exception)
@@ -652,8 +647,5 @@ class DBLogin(object):
         self.dialog.destroy()
         if res != gtk.RESPONSE_OK:
             rpc.logout()
-            from tryton.gui.main import Main
-            Main.get_main().refresh_ssl()
             raise TrytonError('QueryCanceled')
         return result
-

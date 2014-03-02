@@ -7,20 +7,15 @@ try:
     import simplejson as json
 except ImportError:
     import json
-import tryton.rpc as rpc
 import locale
 from interface import ParserView
-from tryton.action import Action
-from tryton.common import message
 import gettext
-import tryton.common as common
 from tryton.config import CONFIG
 from tryton.common.cellrendererbutton import CellRendererButton
 from tryton.common.cellrenderertoggle import CellRendererToggle
-from tryton.pyson import PYSONEncoder
 from tryton.gui.window import Window
-from tryton.exceptions import TrytonServerError
-import os
+from tryton.common.popup_menu import populate
+from tryton.common import RPCExecute, RPCException
 
 _ = gettext.gettext
 
@@ -33,7 +28,7 @@ def path_convert_id2pos(model, id_path):
         current_id = id_path.pop(0)
         try:
             record = group.get(current_id)
-            group = record.children_group(model.children_field, check_load=True)
+            group = record.children_group(model.children_field)
         except (KeyError, AttributeError):
             return None
     return model.on_get_path(record)
@@ -44,11 +39,9 @@ class AdaptModelGroup(gtk.GenericTreeModel):
     def __init__(self, group, children_field=None):
         super(AdaptModelGroup, self).__init__()
         self.group = group
-        self.last_sort = None
-        self.sort_asc = True
         self.set_property('leak_references', False)
         self.children_field = children_field
-        self.__removed = None # XXX dirty hack to allow update of has_child
+        self.__removed = None  # XXX dirty hack to allow update of has_child
 
     def added(self, group, record):
         if (group is self.group
@@ -65,23 +58,12 @@ class AdaptModelGroup(gtk.GenericTreeModel):
                 iter_ = self.get_iter(path)
                 self.row_has_child_toggled(path, iter_)
 
-    def cancel(self):
-        pass
-
     def removed(self, group, record):
         if (group is self.group
                 and (record.group is self.group
                     or record.group.child_name == self.children_field)):
             path = self.on_get_path(record)
             self.row_deleted(path)
-            if (record.parent and
-                    record.group != self.group and
-                    len(record.children_group(self.children_field)) <= 1):
-                path = self.on_get_path(record.parent)
-                iter_ = self.get_iter(path)
-                self.__removed = record # XXX check for thread
-                self.row_has_child_toggled(path, iter_)
-                self.__removed = None
 
     def append(self, model):
         self.group.add(model)
@@ -123,7 +105,7 @@ class AdaptModelGroup(gtk.GenericTreeModel):
     def move_into(self, record, path):
         iter_ = self.get_iter(path)
         parent = self.get_value(iter_, 0)
-        group = parent.children_group(self.children_field, check_load=True)
+        group = parent.children_group(self.children_field)
         if group is not record.group:
             record.group.remove(record, remove=True, force_remove=True)
             # Don't remove record from previous group
@@ -152,8 +134,8 @@ class AdaptModelGroup(gtk.GenericTreeModel):
                 pos += 1
             except KeyError:
                 continue
-        self.group.sort(lambda x, y: \
-                cmp(new_order[ids2pos[x.id]], new_order[ids2pos[y.id]]))
+        self.group.sort(lambda x, y:
+            cmp(new_order[ids2pos[x.id]], new_order[ids2pos[y.id]]))
         prev = None
         for record in self.group:
             if prev:
@@ -205,7 +187,7 @@ class AdaptModelGroup(gtk.GenericTreeModel):
             record = group[i]
             if not self.children_field:
                 break
-            group = record.children_group(self.children_field, check_load=True)
+            group = record.children_group(self.children_field)
         return record
 
     def on_get_value(self, record, column):
@@ -220,6 +202,8 @@ class AdaptModelGroup(gtk.GenericTreeModel):
         if record is None or not self.children_field:
             return False
         children = record.children_group(self.children_field)
+        if children is None:
+            return True
         length = len(children)
         if self.__removed and self.__removed in children:
             length -= 1
@@ -256,9 +240,9 @@ class AdaptModelGroup(gtk.GenericTreeModel):
 
 class ViewList(ParserView):
 
-    def __init__(self, screen, widget, children=None, buttons=None,
+    def __init__(self, screen, widget, children=None, state_widgets=None,
             notebooks=None, cursor_widget=None, children_field=None):
-        super(ViewList, self).__init__(screen, widget, children, buttons,
+        super(ViewList, self).__init__(screen, widget, children, state_widgets,
             notebooks, cursor_widget, children_field)
         self.store = None
         self.view_type = 'tree'
@@ -317,31 +301,51 @@ class ViewList(ParserView):
         if screen.readonly:
             dnd = False
         if dnd:
-            self.widget_tree.drag_source_set(gtk.gdk.BUTTON1_MASK | gtk.gdk.BUTTON3_MASK,
-                    [('MY_TREE_MODEL_ROW', gtk.TARGET_SAME_WIDGET, 0),],
-                    gtk.gdk.ACTION_MOVE)
+            self.widget_tree.drag_source_set(
+                gtk.gdk.BUTTON1_MASK | gtk.gdk.BUTTON3_MASK,
+                [('MY_TREE_MODEL_ROW', gtk.TARGET_SAME_WIDGET, 0)],
+                gtk.gdk.ACTION_MOVE)
             self.widget_tree.drag_dest_set(gtk.DEST_DEFAULT_ALL,
-                    [('MY_TREE_MODEL_ROW', gtk.TARGET_SAME_WIDGET, 0),],
-                    gtk.gdk.ACTION_MOVE)
+                [('MY_TREE_MODEL_ROW', gtk.TARGET_SAME_WIDGET, 0)],
+                gtk.gdk.ACTION_MOVE)
 
             self.widget_tree.connect('drag-begin', self.drag_begin)
             self.widget_tree.connect('drag-motion', self.drag_motion)
             self.widget_tree.connect('drag-drop', self.drag_drop)
             self.widget_tree.connect("drag-data-get", self.drag_data_get)
-            self.widget_tree.connect('drag-data-received', self.drag_data_received)
+            self.widget_tree.connect('drag-data-received',
+                self.drag_data_received)
             self.widget_tree.connect('drag-data-delete', self.drag_data_delete)
 
         self.widget_tree.connect('key_press_event', self.on_keypress)
         if self.children_field:
             self.widget_tree.connect('test-expand-row', self.test_expand_row)
-            self.widget_tree.set_expander_column(self.widget_tree.get_column(0))
+            self.widget_tree.set_expander_column(
+                self.widget_tree.get_column(0))
+
+    @property
+    def modified(self):
+        return False
+
+    @property
+    def editable(self):
+        return bool(getattr(self.widget_tree, 'editable', False))
 
     def get_fields(self):
         return [col.name for col in self.widget_tree.get_columns() if col.name]
 
+    def get_buttons(self):
+        return [b for b in self.state_widgets
+            if isinstance(b.renderer, CellRendererButton)]
+
     def on_keypress(self, widget, event):
-        if event.keyval == gtk.keysyms.c and event.state & gtk.gdk.CONTROL_MASK:
+        if (event.keyval == gtk.keysyms.c
+                and event.state & gtk.gdk.CONTROL_MASK):
             self.on_copy()
+            return False
+        if (event.keyval == gtk.keysyms.v
+                and event.state & gtk.gdk.CONTROL_MASK):
+            self.on_paste()
             return False
         if event.keyval in (gtk.keysyms.Down, gtk.keysyms.Up):
             path, column = widget.get_cursor()
@@ -351,7 +355,7 @@ class ViewList(ParserView):
             if event.keyval == gtk.keysyms.Down:
                 test = True
                 for i in xrange(len(path)):
-                    iter_ = model.get_iter(path[0:i+1])
+                    iter_ = model.get_iter(path[0:i + 1])
                     if model.iter_next(iter_):
                         test = False
                 if test:
@@ -391,11 +395,10 @@ class ViewList(ParserView):
         while iter_:
             record = model.get_value(iter_, 0)
             if not record.get_loaded(fields):
-                try:
-                    for field in fields:
-                        record.__getitem__(field, True)
-                except TrytonServerError, exception:
-                    return True
+                for field in fields:
+                    record[field]
+                    if record.exception:
+                        return True
             iter_ = model.iter_next(iter_)
         return False
 
@@ -423,7 +426,7 @@ class ViewList(ParserView):
                 clipboard.set_with_data(targets, self.copy_get_func,
                         self.copy_clear_func, selection)
 
-    def copy_foreach(self, treemodel, path,iter, data):
+    def copy_foreach(self, treemodel, path, iter, data):
         record = treemodel.get_value(iter, 0)
         values = []
         for col in self.widget_tree.get_columns():
@@ -444,6 +447,60 @@ class ViewList(ParserView):
     def copy_clear_func(self, clipboard, selection):
         del selection
         return
+
+    def on_paste(self):
+        if not self.editable:
+            return
+
+        def unquote(value):
+            if value[:1] == '"' and value[-1:] == '"':
+                return value[1:-1]
+            return value
+        data = []
+        for clipboard_type in (gtk.gdk.SELECTION_CLIPBOARD,
+                gtk.gdk.SELECTION_PRIMARY):
+            clipboard = self.widget_tree.get_clipboard(clipboard_type)
+            text = clipboard.wait_for_text()
+            if not text:
+                continue
+            data = [[unquote(v) for v in l.split('\t')]
+                for l in text.splitlines()]
+            break
+        col = self.widget_tree.get_cursor()[1]
+        columns = [c for c in self.widget_tree.get_columns()
+            if c.get_visible() and c.name]
+        if col in columns:
+            idx = columns.index(col)
+            columns = columns[idx:]
+        if self.screen.current_record:
+            record = self.screen.current_record
+            group = record.group
+            idx = group.index(record)
+        else:
+            group = self.screen.group
+            idx = len(group)
+        default = None
+        for line in data:
+            if idx >= len(group):
+                record = group.new(default=False)
+                if default is None:
+                    default = record.default_get()
+                record.set_default(default)
+                group.add(record)
+            record = group[idx]
+            for col, value in zip(columns, line):
+                cell = self.widget_tree.cells[col.name]
+                if cell.get_textual_value(record) != value:
+                    cell.value_from_text(record, value)
+                    if value and not cell.get_textual_value(record):
+                        # Stop setting value if a value is correctly set
+                        idx = len(group)
+                        break
+            if not record.validate():
+                break
+            idx += 1
+        self.screen.current_record = record
+        self.screen.display(set_cursor=True)
 
     def drag_begin(self, treeview, context):
         return True
@@ -469,6 +526,7 @@ class ViewList(ParserView):
     def drag_data_get(self, treeview, context, selection, target_id,
             etime):
         treeview.emit_stop_by_name('drag-data-get')
+
         def _func_sel_get(store, path, iter_, data):
             value = store.get_value(iter_, 0)
             data.append(json.dumps(value.get_path(store.group)))
@@ -500,6 +558,7 @@ class ViewList(ParserView):
         record = store.group.get_by_path(data)
         record_path = store.on_get_path(record)
         drop_info = treeview.get_dest_row_at_pos(x, y)
+
         def check_recursion(from_, to):
             if not from_ or not to:
                 return True
@@ -512,7 +571,8 @@ class ViewList(ParserView):
         if drop_info:
             path, position = drop_info
             check_path = path
-            if position in (gtk.TREE_VIEW_DROP_BEFORE, gtk.TREE_VIEW_DROP_AFTER):
+            if position in (gtk.TREE_VIEW_DROP_BEFORE,
+                    gtk.TREE_VIEW_DROP_AFTER):
                 check_path = path[:-1]
             if not check_recursion(record_path, check_path):
                 return
@@ -534,54 +594,57 @@ class ViewList(ParserView):
 
     def __button_press(self, treeview, event):
         if event.button == 3:
-            path = treeview.get_path_at_pos(int(event.x), int(event.y))
+            try:
+                path, col, x, y = treeview.get_path_at_pos(
+                    int(event.x), int(event.y))
+            except TypeError:
+                # Outside row
+                return False
             selection = treeview.get_selection()
             if selection.get_mode() == gtk.SELECTION_SINGLE:
                 model = selection.get_selected()[0]
             elif selection.get_mode() == gtk.SELECTION_MULTIPLE:
                 model = selection.get_selected_rows()[0]
-            if (not path) or not path[0]:
-                return False
-            record = model.group[path[0][0]]
-
-            menu_entries = []
-            menu_entries.append(('gtk-copy', lambda x: self.on_copy(), 1))
-            if hasattr(path[1], '_type') and path[1]._type == 'many2one':
-                value = record[path[1].name].get(record)
-                args = ('model', 'ir.action.keyword', 'get_keyword',
-                        'form_relate', (self.screen.group.fields[
-                            path[1].name].attrs['relation'], -1), rpc.CONTEXT)
-                try:
-                    relates = rpc.execute(*args)
-                except TrytonServerError, exception:
-                    relates = common.process_exception(exception, *args)
-                if relates:
-                    menu_entries.append((None, None, None))
-                    menu_entries.append((_('Actions'),
-                        lambda x: self.click_and_action(
-                            'form_action', value, path), 0))
-                    menu_entries.append((_('Reports'),
-                        lambda x: self.click_and_action(
-                            'form_print', value, path), 0))
-                    menu_entries.append((None, None, None))
-                    for relate in relates:
-                        relate['string'] = relate['name']
-                        fct = lambda action: lambda x: \
-                                self.click_and_relate(action, value, path)
-                        menu_entries.append(
-                                ('... ' + relate['name'], fct(relate), 0))
+            record = model.get_value(model.get_iter(path), 0)
+            group = record.group
             menu = gtk.Menu()
-            for stock_id, callback, sensitivity in menu_entries:
-                if stock_id:
-                    item = gtk.ImageMenuItem(stock_id)
-                    if callback:
-                        item.connect('activate', callback)
-                    item.set_sensitive(bool(sensitivity or value))
-                else:
-                    item = gtk.SeparatorMenuItem()
-                item.show()
-                menu.append(item)
             menu.popup(None, None, None, event.button, event.time)
+
+            def pop(menu, group, record):
+                copy_item = gtk.ImageMenuItem('gtk-copy')
+                copy_item.connect('activate', lambda x: self.on_copy())
+                menu.append(copy_item)
+                paste_item = gtk.ImageMenuItem('gtk-paste')
+                paste_item.connect('activate', lambda x: self.on_paste())
+                menu.append(paste_item)
+                # Don't activate actions if parent is modified
+                parent = record.parent if record else None
+                while parent:
+                    if parent.modified:
+                        break
+                    parent = parent.parent
+                else:
+                    populate(menu, group.model_name, record)
+                for col in self.widget_tree.get_columns():
+                    if not col.get_visible() or not col.name:
+                        continue
+                    field = group.fields[col.name]
+                    model = None
+                    if field.attrs['type'] == 'many2one':
+                        model = field.attrs['relation']
+                        record_id = field.get(record)
+                    elif field.attrs['type'] == 'reference':
+                        value = field.get(record)
+                        if value:
+                            model, record_id = value.split(',')
+                            record_id = int(record_id)
+                    if not model:
+                        continue
+                    label = field.attrs['string']
+                    populate(menu, model, record_id, title=label)
+                menu.show_all()
+            # Delay filling of popup as it can take time
+            gobject.idle_add(pop, menu, group, record)
         elif event.button == 2:
             event.button = 1
             event.state |= gtk.gdk.MOD1_MASK
@@ -589,48 +652,13 @@ class ViewList(ParserView):
             return True
         return False
 
-    def click_and_relate(self, action, value, path):
-        data = {}
-        context = {}
-        act = action.copy()
-        if not(value):
-            message(_('You must select a record to use the relation!'))
-            return False
-        from tryton.gui.window.view_form.screen import Screen
-        screen = Screen(self.screen.group.fields[
-            path[1].name].attrs['relation'])
-        screen.load([value])
-        encoder = PYSONEncoder()
-        act['domain'] = encoder.encode(screen.current_record.expr_eval(
-            act.get('domain', []), check_load=False))
-        act['context'] = encoder.encode(screen.current_record.expr_eval(
-            act.get('context', {}), check_load=False))
-        data['model'] = self.screen.model_name
-        data['id'] = value
-        data['ids'] = [value]
-        return Action._exec_action(act, data, context)
-
-    def click_and_action(self, atype, value, path):
-        return Action.exec_keyword(atype, {
-            'model': self.screen.group.fields[
-                path[1].name].attrs['relation'],
-            'id': value or False,
-            'ids': [value],
-            }, alwaysask=True)
-
     def group_list_changed(self, group, signal):
         if self.store is not None:
             if signal[0] == 'record-added':
                 self.store.added(group, signal[1])
             elif signal[0] == 'record-removed':
                 self.store.removed(group, signal[1])
-            elif signal[0] == 'group-cleared':
-                self.store = None
-                self.widget_tree.set_model(self.store)
         self.display()
-
-    def cancel(self):
-        pass
 
     def __str__(self):
         return 'ViewList (%d)' % id(self)
@@ -638,32 +666,36 @@ class ViewList(ParserView):
     def __getitem__(self, name):
         return None
 
-    def destroy(self):
-        if CONFIG['client.save_width_height']:
-            fields = {}
-            last_col = None
-            for col in self.widget_tree.get_columns():
-                if col.get_visible():
-                    last_col = col
-                if not hasattr(col, 'name') or not hasattr(col, 'width'):
-                    continue
-                if col.get_width() != col.width and col.get_visible():
-                    fields[col.name] = col.get_width()
-            #Don't set width for last visible columns
-            #as it depends of the screen size
-            if last_col and last_col.name in fields:
-                del fields[last_col.name]
+    def save_width_height(self):
+        if not CONFIG['client.save_width_height']:
+            return
+        fields = {}
+        last_col = None
+        for col in self.widget_tree.get_columns():
+            if col.get_visible():
+                last_col = col
+            if not hasattr(col, 'name') or not hasattr(col, 'width'):
+                continue
+            if (col.get_width() != col.width and col.get_visible()
+                    and not col.get_expand()):
+                fields[col.name] = col.get_width()
+        #Don't set width for last visible columns
+        #as it depends of the screen size
+        if last_col and last_col.name in fields:
+            del fields[last_col.name]
 
-            if fields and any(fields.itervalues()):
-                try:
-                    rpc.execute('model', 'ir.ui.view_tree_width', 'set_width',
-                            self.screen.model_name, fields, rpc.CONTEXT)
-                except TrytonServerError:
-                    pass
+        if fields and any(fields.itervalues()):
+            model_name = self.screen.model_name
+            try:
+                RPCExecute('model', 'ir.ui.view_tree_width', 'set_width',
+                    model_name, fields)
+            except RPCException:
+                pass
+            self.screen.tree_column_width[model_name].update(fields)
+
+    def destroy(self):
+        self.save_width_height()
         self.widget_tree.destroy()
-        self.screen = None
-        self.widget_tree = None
-        self.widget = None
 
     def __sig_switch(self, treeview, path, column):
         if column._type == 'button':
@@ -696,28 +728,41 @@ class ViewList(ParserView):
         elif tree_sel.get_mode() == gtk.SELECTION_MULTIPLE:
             model, paths = tree_sel.get_selected_rows()
             if model and paths:
-                iter_ = model.get_iter(paths[0])
-                record = model.get_value(iter_, 0)
+                record = model.on_get_iter(paths[0])
                 self.screen.current_record = record
             else:
                 self.screen.current_record = None
 
-        if hasattr(self.widget_tree, 'editable') \
-                and self.widget_tree.editable \
-                and not self.screen.parent \
-                and previous_record != self.screen.current_record:
-            if previous_record and \
-                    not (previous_record.validate(self.get_fields())
-                            and previous_record.save()):
+        if self.editable and previous_record:
+            def go_previous():
                 self.screen.current_record = previous_record
                 self.set_cursor()
-                return True
+            if (not self.screen.parent
+                    and previous_record != self.screen.current_record):
+
+                def save():
+                    if not previous_record.destroyed:
+                        if not previous_record.save():
+                            go_previous()
+
+                if not previous_record.validate(self.get_fields()):
+                    go_previous()
+                    return True
+                # Delay the save to let GTK process the current event
+                gobject.idle_add(save)
+            elif (previous_record != self.screen.current_record
+                    and self.screen.pre_validate):
+
+                def pre_validate():
+                    if not previous_record.destroyed:
+                        if not previous_record.pre_validate():
+                            go_previous()
+                # Delay the pre_validate to let GTK process the current event
+                gobject.idle_add(pre_validate)
         self.update_children()
 
-
     def set_value(self):
-        if hasattr(self.widget_tree, 'editable') \
-                and self.widget_tree.editable:
+        if self.editable:
             self.widget_tree.set_value()
 
     def reset(self):
@@ -726,10 +771,10 @@ class ViewList(ParserView):
     # self.widget.set_model(self.store) could be removed if the store
     # has not changed -> better ergonomy. To test
     def display(self):
-        if self.reload \
-                or (not self.widget_tree.get_model()) \
-                    or self.screen.group != \
-                        self.widget_tree.get_model().group:
+        if (self.reload
+                or not self.widget_tree.get_model()
+                or (self.screen.group !=
+                    self.widget_tree.get_model().group)):
             self.store = AdaptModelGroup(self.screen.group,
                     self.children_field)
             self.widget_tree.set_model(self.store)
@@ -740,8 +785,7 @@ class ViewList(ParserView):
             if self.store:
                 self.widget_tree.set_model(self.store)
         self.widget_tree.queue_draw()
-        if hasattr(self.widget_tree, 'editable') \
-                and self.widget_tree.editable:
+        if self.editable:
             self.set_state()
         self.update_children()
 
@@ -754,34 +798,28 @@ class ViewList(ParserView):
                     field.state_set(record)
 
     def update_children(self):
-        ids = self.sel_ids_get()
+        selected_records = self.selected_records
         for child in self.children:
-            value = 0.0
-            value_selected = 0.0
+            value = 0
+            value_selected = 0
             loaded = True
             child_fieldname = self.children[child][0]
             for record in self.screen.group:
                 if not record.get_loaded([child_fieldname]):
                     loaded = False
                     break
-                field_value = record.fields_get()[child_fieldname].get(record,
-                    check_load=False)
-                if record.id in ids or not ids:
-                    if not value_selected:
-                        value_selected = field_value
-                    else:
-                        value_selected += field_value
-                if not value:
-                    value = field_value
-                else:
+                field_value = record.fields_get()[child_fieldname].get(record)
+                if field_value is not None:
                     value += field_value
+                    if record in selected_records or not selected_records:
+                        value_selected += field_value
 
             if loaded:
-                label_str = locale.format('%.' + str(self.children[child][3]) + 'f',
-                        value_selected, True)
+                label_str = locale.format('%.*f',
+                    (self.children[child][3], value_selected), True)
                 label_str += ' / '
-                label_str += locale.format('%.' + str(self.children[child][3]) + 'f',
-                        value, True)
+                label_str += locale.format('%.*f',
+                    (self.children[child][3], value), True)
             else:
                 label_str = '-'
             self.children[child][2].set_text(label_str)
@@ -792,38 +830,18 @@ class ViewList(ParserView):
             path = self.store.on_get_path(self.screen.current_record)
             if self.store.get_flags() & gtk.TREE_MODEL_LIST_ONLY:
                 path = (path[0],)
-            focus_column = None
-            for column in self.widget_tree.get_columns():
-                renderers = column.get_cell_renderers()
-                if not renderers:
-                    continue
-                renderer = renderers[0]
-                if isinstance(renderer, CellRendererToggle):
-                    editable = renderer.get_property('activatable')
-                elif isinstance(renderer,
-                        (gtk.CellRendererProgress, CellRendererButton,
-                            gtk.CellRendererPixbuf)):
-                    editable = False
-                else:
-                    editable = renderer.get_property('editable')
-                if column.get_visible() and editable:
-                    focus_column = column
-                    break
+            focus_column = self.widget_tree.next_column(path, editable=new)
             if path[:-1]:
                 self.widget_tree.expand_to_path(path[:-1])
-            self.widget_tree.scroll_to_cell(path, focus_column, use_align=False)
-            self.widget_tree.set_cursor(path, focus_column, new)
+            self.widget_tree.scroll_to_cell(path, focus_column,
+                use_align=False)
+            current_path = self.widget_tree.get_cursor()[0]
+            selected_path = \
+                self.widget_tree.get_selection().get_selected_rows()[1]
+            if (current_path != path and path not in selected_path) or new:
+                self.widget_tree.set_cursor(path, focus_column, new)
 
-    def sel_ids_get(self):
-        def _func_sel_get(store, path, iter, ids):
-            record = store.on_get_iter(path)
-            if record and record.id >= 0:
-                ids.append(record.id)
-        ids = []
-        sel = self.widget_tree.get_selection()
-        sel.selected_foreach(_func_sel_get, ids)
-        return ids
-
+    @property
     def selected_records(self):
         def _func_sel_get(store, path, iter, records):
             records.append(store.on_get_iter(path))
@@ -844,6 +862,33 @@ class ViewList(ParserView):
                     pass
                 else:
                     renderer.set_property('editable', False)
+
+    def get_selected_paths(self):
+        selection = self.widget_tree.get_selection()
+        model, rows = selection.get_selected_rows()
+        id_paths = []
+        for row in rows:
+            path = ()
+            id_path = []
+            for node in row:
+                path += (node,)
+                id_path.append(model.on_get_iter(path).id)
+            id_paths.append(id_path)
+        return id_paths
+
+    def select_nodes(self, nodes):
+        selection = self.widget_tree.get_selection()
+        if not nodes:
+            return
+        selection.unselect_all()
+        scroll = False
+        for node in nodes:
+            path = path_convert_id2pos(self.store, node)
+            if path:
+                selection.select_path(path)
+                if not scroll:
+                    self.widget_tree.scroll_to_cell(path)
+                    scroll = True
 
     def get_expanded_paths(self, starting_path=None, starting_id_path=None):
         # Use id instead of position

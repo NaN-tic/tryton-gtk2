@@ -3,32 +3,36 @@
 """
 %prog [options]
 """
-import os
 import sys
+try:
+    import cdecimal
+    # Use cdecimal globally
+    if 'decimal' not in sys.modules:
+        sys.modules['decimal'] = cdecimal
+except ImportError:
+    import decimal
+    sys.modules['cdecimal'] = decimal
+import os
 import pygtk
 pygtk.require('2.0')
 import gtk
 import gobject
 gobject.threads_init()
-import logging
 from urlparse import urlparse
 import threading
 
-from tryton import version
-from tryton import config
 import tryton.common as common
-from tryton.config import CONFIG, CURRENT_DIR, PREFIX, PIXMAPS_DIR, \
-        TRYTON_ICON, get_config_dir
+from tryton.config import CONFIG, get_config_dir
 from tryton import translate
 from tryton import gui
 from tryton.ipc import Client as IPCClient
-import traceback
 import time
 import signal
 
 if not hasattr(gtk.gdk, 'lock'):
     class _Lock(object):
         __enter__ = gtk.gdk.threads_enter
+
         def __exit__(*ignored):
             gtk.gdk.threads_leave()
 
@@ -36,10 +40,12 @@ if not hasattr(gtk.gdk, 'lock'):
 
 if sys.platform == 'win32':
     class Dialog(gtk.Dialog):
+
         def run(self):
             with gtk.gdk.lock:
                 return super(Dialog, self).run()
     gtk.Dialog = Dialog
+
 
 class TrytonClient(object):
     "Tryton client"
@@ -60,24 +66,8 @@ class TrytonClient(object):
                 CONFIG['login.port'] = port
                 CONFIG['login.db'] = database
                 CONFIG['login.expanded'] = True
-        logging.basicConfig()
         translate.set_language_direction(CONFIG['client.language_direction'])
         translate.setlang(CONFIG['client.lang'])
-        loglevel = {
-                'DEBUG': logging.DEBUG,
-                'INFO': logging.INFO,
-                'WARNING': logging.WARNING,
-                'ERROR': logging.ERROR,
-                'CRITICAL': logging.CRITICAL,
-                }
-        for logger in CONFIG['logging.logger'].split(','):
-            if logger:
-                log = logging.getLogger(logger)
-                log.setLevel(loglevel[CONFIG['logging.level'].upper()])
-        if CONFIG['logging.default']:
-            logging.getLogger().setLevel(
-                    loglevel[CONFIG['logging.default'].upper()])
-
         self.quit_client = (threading.Event()
             if sys.platform == 'win32' else None)
         common.ICONFACTORY.load_client_icons()
@@ -95,7 +85,8 @@ class TrytonClient(object):
         signal.signal(signal.SIGINT, lambda signum, frame: main.sig_quit())
         signal.signal(signal.SIGTERM, lambda signum, frame: main.sig_quit())
         if hasattr(signal, 'SIGQUIT'):
-            signal.signal(signal.SIGQUIT, lambda signum, frame: main.sig_quit())
+            signal.signal(signal.SIGQUIT,
+                lambda signum, frame: main.sig_quit())
 
         def excepthook(exctyp, exception, tb):
             import common
@@ -109,13 +100,6 @@ class TrytonClient(object):
             main.sig_tips()
         main.sig_login()
 
-        #XXX psyco breaks report printing
-        #try:
-        #    import psyco
-        #    psyco.full()
-        #except ImportError:
-        #    pass
-
         if sys.platform == 'win32':
             # http://faq.pygtk.org/index.py?req=show&file=faq21.003.htp
             def sleeper():
@@ -127,13 +111,12 @@ class TrytonClient(object):
             if sys.platform == 'win32':
                 while not self.quit_client.isSet():
                     with gtk.gdk.lock:
-                            running = gtk.main_iteration(True)
+                            gtk.main_iteration(True)
             else:
                 gtk.main()
         except KeyboardInterrupt:
             CONFIG.save()
-            if hasattr(gtk, 'accel_map_save'):
-                gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
+            gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
 
 if __name__ == "__main__":
     CLIENT = TrytonClient()

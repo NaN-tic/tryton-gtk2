@@ -1,19 +1,17 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-import time
-import datetime
 import tryton.rpc as rpc
-from tryton.common import message, error, selection, file_open, mailto
+from tryton.common import message, selection, file_open, mailto
 from tryton.gui.window import Window
 from tryton.pyson import PYSONDecoder
-from tryton.exceptions import TrytonServerError
 import gettext
 import tempfile
 import os
 import webbrowser
-import tryton.common as common
+from tryton.common import RPCProgress, RPCExecute, RPCException, slugify
 
 _ = gettext.gettext
+
 
 class Action(object):
 
@@ -25,31 +23,15 @@ class Action(object):
         if email is None:
             email = {}
         data = data.copy()
-        ids = data['ids']
-        del data['ids']
         ctx = rpc.CONTEXT.copy()
         ctx.update(context)
         ctx['direct_print'] = direct_print
         ctx['email_print'] = email_print
         ctx['email'] = email
-        if not ids:
-            args = ('model', data['model'], 'search', [], 0, None, None, ctx)
-            try:
-                ids = rpc.execute(*args)
-            except TrytonServerError, exception:
-                ids = common.process_exception(exception, *args)
-                if not ids:
-                    return False
-            if ids == []:
-                message(_('Nothing to print!'))
-                return False
-            data['id'] = ids[0]
-        args = ('report', name, 'execute', ids, data, ctx)
-        rpcprogress = common.RPCProgress('execute', args)
+        args = ('report', name, 'execute', data.get('ids', []), data, ctx)
         try:
-            res = rpcprogress.run()
-        except TrytonServerError, exception:
-            common.process_exception(exception)
+            res = RPCProgress('execute', args).run()
+        except RPCException:
             return False
         if not res:
             return False
@@ -57,42 +39,36 @@ class Action(object):
         if not print_p and direct_print:
             print_p = True
         dtemp = tempfile.mkdtemp(prefix='tryton_')
+
         fp_name = os.path.join(dtemp,
-                name.replace(os.sep, '_').replace(os.altsep or os.sep, '_') \
-            + os.extsep
-            + type.replace(os.sep, '_').replace(os.altsep or os.sep, '_'))
+            slugify(name) + os.extsep + slugify(type))
         with open(fp_name, 'wb') as file_d:
             file_d.write(data)
         if email_print:
             mailto(to=email.get('to'), cc=email.get('cc'),
-                    subject=email.get('subject'), body=email.get('body'),
-                    attachment=fp_name)
+                subject=email.get('subject'), body=email.get('body'),
+                attachment=fp_name)
         else:
             file_open(fp_name, type, print_p=print_p)
         return True
 
     @staticmethod
     def execute(act_id, data, action_type=None, context=None):
-        if context is None:
-            context = {}
-        ctx = rpc.CONTEXT.copy()
-        ctx.update(context)
         if not action_type:
             res = False
             try:
-                res = rpc.execute('model', 'ir.action', 'read', act_id,
-                        ['type'], ctx)
-            except TrytonServerError, exception:
-                common.process_exception(exception)
+                res, = RPCExecute('model', 'ir.action', 'read', [act_id],
+                    ['type'], context=context)
+            except RPCException:
                 return
             if not res:
-                raise Exception, 'ActionNotFound'
+                raise Exception('ActionNotFound')
             action_type = res['type']
         try:
-            res = rpc.execute('model', action_type, 'search_read',
-                    [('action', '=', act_id)], 0, 1, None, None, ctx)
-        except TrytonServerError, exception:
-            common.process_exception(exception)
+            res, = RPCExecute('model', action_type, 'search_read',
+                [('action', '=', act_id)], 0, 1, None, None,
+                context=context)
+        except RPCException:
             return
         Action._exec_action(res, data)
 
@@ -107,6 +83,7 @@ class Action(object):
         if 'type' not in (action or {}):
             return
 
+        data['action_id'] = action['id']
         if action['type'] == 'ir.action.act_window':
             view_ids = False
             view_mode = None
@@ -118,27 +95,23 @@ class Action(object):
 
             action.setdefault('pyson_domain', '[]')
             ctx = {
-                'active_id': data.get('id', False),
+                'active_model': data.get('res_model'),
+                'active_id': data.get('id'),
                 'active_ids': data.get('ids', []),
             }
             ctx.update(rpc.CONTEXT)
-            eval_ctx = ctx.copy()
-            eval_ctx['_user'] = rpc._USER
-            action_ctx = PYSONDecoder(eval_ctx).decode(
-                    action.get('pyson_context') or '{}')
+            ctx['_user'] = rpc._USER
+            decoder = PYSONDecoder(ctx)
+            action_ctx = decoder.decode(action.get('pyson_context') or '{}')
             ctx.update(action_ctx)
             ctx.update(context)
 
-            domain_context = ctx.copy()
-            domain_context['context'] = ctx
-            domain_context['_user'] = rpc._USER
-            domain = PYSONDecoder(domain_context).decode(action['pyson_domain'])
-
-            search_context = ctx.copy()
-            search_context['context'] = ctx
-            search_context['_user'] = rpc._USER
-            search_value = PYSONDecoder(search_context).decode(
-                    action['pyson_search_value'] or '[]')
+            ctx['context'] = ctx
+            decoder = PYSONDecoder(ctx)
+            domain = decoder.decode(action['pyson_domain'])
+            order = decoder.decode(action['pyson_order'])
+            search_value = decoder.decode(action['pyson_search_value'] or '[]')
+            tab_domain = [(n, decoder.decode(d)) for n, d in action['domains']]
 
             name = False
             if action.get('window_name', True):
@@ -148,11 +121,12 @@ class Action(object):
             res_id = action.get('res_id', data.get('res_id'))
 
             Window.create(view_ids, res_model, res_id, domain,
-                    action_ctx, view_mode, name=name,
+                    action_ctx, order, view_mode, name=name,
                     limit=action.get('limit'),
                     auto_refresh=action.get('auto_refresh'),
                     search_value=search_value,
-                    icon=(action.get('icon.rec_name') or ''))
+                    icon=(action.get('icon.rec_name') or ''),
+                    tab_domain=tab_domain)
         elif action['type'] == 'ir.action.wizard':
             Window.create_wizard(action['wiz_name'], data,
                 direct_print=action.get('direct_print', False),
@@ -175,15 +149,12 @@ class Action(object):
     def exec_keyword(keyword, data=None, context=None, warning=True,
             alwaysask=False):
         actions = []
-        if 'id' in data:
-            model_id = data.get('id', False)
-            try:
-                actions = rpc.execute('model', 'ir.action.keyword',
-                        'get_keyword', keyword, (data['model'], model_id),
-                        rpc.CONTEXT)
-            except TrytonServerError, exception:
-                common.process_exception(exception)
-                return False
+        model_id = data.get('id', False)
+        try:
+            actions = RPCExecute('model', 'ir.action.keyword',
+                'get_keyword', keyword, (data['model'], model_id))
+        except RPCException:
+            return False
 
         keyact = {}
         for action in actions:
@@ -197,3 +168,19 @@ class Action(object):
         elif not len(keyact) and warning:
             message(_('No action defined!'))
         return False
+
+    @staticmethod
+    def evaluate(action, atype, record):
+        '''
+        Evaluate the action with the record.
+        '''
+        action = action.copy()
+        email = {}
+        if 'pyson_email' in action:
+            email = record.expr_eval(action['pyson_email'])
+            if not email:
+                email = {}
+        if 'subject' not in email:
+            email['subject'] = action['name'].replace('_', '')
+        action['email'] = email
+        return action
