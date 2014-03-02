@@ -2,6 +2,7 @@ Glossary
 ########
 
 .. glossary::
+   :sorted:
 
    Actions
       An *action* is a function which is triggered by a user intervention.
@@ -162,6 +163,4 @@ References
 .. [WP-CSV] http://en.wikipedia.org/wiki/Comma-separated_values
 .. [WP-ENCOD] http://en.wikipedia.org/wiki/Character_encoding
 
-:Authors:
-  Udo Spallek, Cédric Krier, Bertrand Chenal, Anne Krings
 

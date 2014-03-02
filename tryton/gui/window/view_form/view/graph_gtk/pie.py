@@ -1,10 +1,13 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
-#This code is inspired by the pycha project (http://www.lorenzogil.com/projects/pycha/)
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
+#This code is inspired by the pycha project
+#(http://www.lorenzogil.com/projects/pycha/)
 from graph import Graph, Area
 import math
 import cairo
-from tryton.common import hex2rgb
+from tryton.common import hex2rgb, float_time_to_text
 import locale
+import tryton.rpc as rpc
 
 
 class Pie(Graph):
@@ -22,9 +25,9 @@ class Pie(Graph):
             normalisedAngle = slice.normalisedAngle()
 
             labelx = self.centerx + \
-                    math.sin(normalisedAngle) * (self.radius + 10)
+                math.sin(normalisedAngle) * (self.radius + 10)
             labely = self.centery - \
-                    math.cos(normalisedAngle) * (self.radius + 10)
+                math.cos(normalisedAngle) * (self.radius + 10)
 
             label = '%s (%s%%)' % (self.labels[slice.xname],
                     locale.format('%.2f', slice.fraction * 100))
@@ -65,7 +68,7 @@ class Pie(Graph):
     def updateGraph(self):
 
         self.sum = 0.0
-        for xkey in self.datas.keys():
+        for xkey in self.datas.iterkeys():
             key = self.yfields[0].get('key', self.yfields[0]['name'])
             if self.datas[xkey][key] > 0:
                 self.sum += self.datas[xkey][key]
@@ -73,7 +76,7 @@ class Pie(Graph):
         fraction = angle = 0.0
 
         self.slices = []
-        for xkey in self.datas.keys():
+        for xkey in self.datas.iterkeys():
             key = self.yfields[0].get('key', self.yfields[0]['name'])
             value = self.datas[xkey][key]
             if value > 0:
@@ -88,14 +91,15 @@ class Pie(Graph):
         cr.save()
         for slice in self.slices:
             if slice.isBigEnough():
-                if bool(eval(self.yfields[0].get('fill', '1'))):
+                if bool(int(self.yfields[0].get('fill', 1))):
                     color = self.colorScheme[slice.xname]
                     if slice.highlight:
                         color = self.colorScheme['__highlight']
                     cr.set_source_rgba(*color)
                     slice.draw(cr, self.centerx, self.centery, self.radius)
                     cr.fill()
-                cr.set_source_rgb(*hex2rgb(self.attrs.get('background', '#f5f5f5')))
+                cr.set_source_rgb(*hex2rgb(
+                        self.attrs.get('background', '#f5f5f5')))
                 slice.draw(cr, self.centerx, self.centery, self.radius)
                 cr.set_line_width(2)
                 cr.stroke()
@@ -118,7 +122,8 @@ class Pie(Graph):
         if event.y == self.centery:
             angle = math.pi / 2
         else:
-            angle = math.atan((event.x - self.centerx)/(self.centery - event.y))
+            angle = math.atan((event.x - self.centerx)
+                / (self.centery - event.y))
         if event.x >= self.centerx:
             if event.y <= self.centery:
                 pass
@@ -135,17 +140,16 @@ class Pie(Graph):
                 if not slice.highlight:
                     slice.highlight = True
                     if self.yfields[0].get('widget') == 'float_time':
-                        val = slice.fraction * self.sum
-                        value = '%02d:%02d' % (math.floor(abs(val)),
-                                round(abs(val) % 1 + 0.01, 2) * 60)
-                        if val < 0:
-                            value = '-' + value
-                        sum = '%02d:%02d' % (math.floor(abs(self.sum)),
-                                round(abs(self.sum) % 1 + 0.01, 2) * 60)
-                        if self.sum < 0:
-                            sum = '-' + sum
+                        conv = None
+                        if self.yfields[0].get('float_time'):
+                            conv = rpc.CONTEXT.get(
+                                self.yfields[0]['float_time'])
+                        value = float_time_to_text(slice.fraction * self.sum,
+                                conv)
+                        sum = float_time_to_text(self.sum, conv)
                     else:
-                        value = locale.format('%.2f', slice.fraction * self.sum)
+                        value = locale.format('%.2f',
+                            slice.fraction * self.sum)
                         sum = locale.format('%.2f', self.sum)
                     label = '%s (%s%%)\n%s/%s' % (self.labels[slice.xname],
                             locale.format('%.2f', slice.fraction * 100),
@@ -157,12 +161,12 @@ class Pie(Graph):
                     slice.highlight = False
                     self.queue_draw()
 
-    def action(self, window):
-        super(Pie, self).action(window)
+    def action(self):
+        super(Pie, self).action()
         for slice in self.slices:
             if slice.highlight:
                 ids = self.ids[slice.xname]
-                self.action_keyword(ids, window)
+                self.action_keyword(ids)
 
 
 class Slice(object):
@@ -182,8 +186,8 @@ class Slice(object):
         cr.new_path()
         cr.move_to(centerx, centery)
         cr.arc(centerx, centery, radius,
-                self.startAngle - (math.pi/2),
-                self.endAngle - (math.pi/2))
+            self.startAngle - (math.pi / 2),
+            self.endAngle - (math.pi / 2))
         cr.line_to(centerx, centery)
         cr.close_path()
 

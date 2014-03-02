@@ -1,12 +1,14 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 "Translate"
 import os
 import locale
 import gettext
 from version import PACKAGE
-from tryton.client import CURRENT_DIR, PREFIX
+from tryton.config import CURRENT_DIR
 import logging
 import gtk
+import sys
 
 _ = gettext.gettext
 
@@ -155,7 +157,7 @@ def setlang(lang=None, locale_dict=None):
     "Set language"
     locale_dir = os.path.join(CURRENT_DIR, 'share/locale')
     if not os.path.isdir(locale_dir):
-        locale_dir = os.path.join(PREFIX, 'share/locale')
+        locale_dir = os.path.join(sys.prefix, 'share/locale')
     if lang:
         encoding = locale.getdefaultlocale()[1]
         if not encoding:
@@ -168,8 +170,7 @@ def setlang(lang=None, locale_dict=None):
             lang2 = lang
             if os.name == 'nt':
                 lang2 = _LOCALE2WIN32.get(lang, lang)
-            elif os.name == 'mac' or \
-                    (hasattr(os, 'uname') and os.uname()[0] == 'Darwin'):
+            elif sys.platform == 'darwin':
                 encoding = 'UTF-8'
             # ensure environment variable are str
             lang, lang2, encoding = str(lang), str(lang2), str(encoding)
@@ -178,8 +179,8 @@ def setlang(lang=None, locale_dict=None):
             os.environ['LC_MESSAGES'] = lang2 + '.' + encoding
             os.environ['LANG'] = lang + '.' + encoding
             locale.setlocale(locale.LC_ALL, lang2 + '.' + encoding)
-        except:
-            logging.getLogger('translate').info(
+        except locale.Error:
+            logging.getLogger(__name__).info(
                     _('Unable to set locale %s') % lang2 + '.' + encoding)
 
     if os.path.isdir(locale_dir):
@@ -196,11 +197,13 @@ def setlang(lang=None, locale_dict=None):
             conv[field] = locale_dict[field]
         locale.localeconv = lambda: conv
 
+
 def set_language_direction(direction):
     if direction == 'rtl':
         gtk.widget_set_default_direction(gtk.TEXT_DIR_RTL)
     else:
         gtk.widget_set_default_direction(gtk.TEXT_DIR_LTR)
+
 
 def date_format():
     '''

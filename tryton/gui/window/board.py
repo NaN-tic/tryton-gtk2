@@ -1,55 +1,70 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
 "Board"
-import gtk
+import gettext
 from tryton.signal_event import SignalEvent
-import tryton.rpc as rpc
+from tryton.gui import Main
 from tryton.gui.window.view_board import ViewBoard
-import tryton.common as common
+from tryton.common import RPCExecute, RPCException
+
+from tabcontent import TabContent
+
+_ = gettext.gettext
 
 
-class Board(SignalEvent):
+class Board(SignalEvent, TabContent):
     'Board'
 
-    def __init__(self, window, view_id, context=None, name=False,
+    toolbar_def = [
+        ('new', 'tryton-new', _('New'), _('Create a new record'), None),
+        ('save', 'tryton-save', _('Save'), _('Save this record'), None),
+        ('switch', 'tryton-fullscreen', _('Switch'), _('Switch view'),
+            None),
+        ('reload', 'tryton-refresh', _('_Reload'), _('Reload'),
+            'sig_reload'),
+    ]
+
+    menu_def = [
+        (_('_New'), 'tryton-new', None, '<tryton>/Form/New'),
+        (_('_Save'), 'tryton-save', None, '<tryton>/Form/Save'),
+        (_('_Switch View'), 'tryton-fullscreen', None,
+            '<tryton>/Form/Switch View'),
+        (_('_Reload/Undo'), 'tryton-refresh', 'sig_reload',
+            '<tryton>/Form/Reload'),
+        (_('_Delete...'), 'tryton-delete', None, '<tryton>/Form/Delete'),
+        (None,) * 4,
+        (_('_Close Tab'), 'tryton-close', 'sig_win_close',
+            '<tryton>/Form/Close'),
+    ]
+
+    def __init__(self, model, view_id, context=None, name=False,
             auto_refresh=False):
         super(Board, self).__init__()
 
         try:
-            view = rpc.execute('model', 'ir.ui.view', 'read',
-                    view_id, ['arch'], context)
-        except Exception, exception:
-            common.process_exception(exception, window)
+            view, = RPCExecute('model', 'ir.ui.view', 'read',
+                [view_id], ['arch'], context=context)
+        except RPCException:
             raise
 
-        self.board = ViewBoard(view['arch'], window, context=context)
-
+        self.board = ViewBoard(view['arch'], context=context)
+        self.model = model
+        self.view_id = view_id
+        self.context = context
+        self.auto_refresh = auto_refresh
+        self.dialogs = []
         if not name:
             self.name = self.board.name
         else:
             self.name = name
-        self.model = ''
 
-        self.widget = gtk.VBox()
+        self.create_tabcontent()
 
-        viewport = gtk.Viewport()
-        viewport.set_shadow_type(gtk.SHADOW_NONE)
-        viewport.add(self.board.widget_get())
-        viewport.show()
-        self.scrolledwindow = gtk.ScrolledWindow()
-        self.scrolledwindow.set_shadow_type(gtk.SHADOW_NONE)
-        self.scrolledwindow.set_policy(gtk.POLICY_AUTOMATIC,
-                gtk.POLICY_AUTOMATIC)
-        self.scrolledwindow.add(viewport)
-        self.scrolledwindow.show()
+    def get_toolbars(self):
+        return {}
 
-        self.widget.pack_start(self.scrolledwindow)
-        self.widget.show()
-
-        self.handlers = {
-            'but_reload': self.sig_reload,
-            'but_close': self.sig_close,
-        }
+    def widget_get(self):
+        return self.board.widget_get()
 
     def sig_reload(self, test_modified=True):
         self.board.reload()
@@ -57,3 +72,25 @@ class Board(SignalEvent):
 
     def sig_close(self):
         return True
+
+    def __eq__(self, value):
+        if not value:
+            return False
+        if not isinstance(value, Board):
+            return False
+        return (self.model == value.model
+            and self.view_id == value.view_id
+            and self.context == value.context
+            and self.name == value.name
+            and self.auto_refresh == value.auto_refresh)
+
+    def sig_win_close(self, widget):
+        Main.get_main().sig_win_close(widget)
+
+    def set_cursor(self):
+        if not self.board.widgets:
+            return
+        first_widget = self.board.widgets[0]
+        # only Actions are added to self.board.widgets, so no need to test
+        # further
+        first_widget.screen.set_cursor()

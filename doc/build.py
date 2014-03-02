@@ -1,5 +1,6 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
 # -*- coding: utf-8 -*-
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 import sys
 import os
 from os import path
@@ -23,4 +24,3 @@ nocolor()
 app = Sphinx(srcdir, confdir, outdir, doctreedir, buildername,
              confoverrides, status, sys.stderr, freshenv)
 app.builder.build_all()
-

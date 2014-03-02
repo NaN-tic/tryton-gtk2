@@ -1,160 +1,295 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
 import gtk
+
 from tryton.gui.window.view_form.screen import Screen
 from interface import WidgetInterface
-from one2many import Dialog
-import tryton.rpc as rpc
 from tryton.gui.window.win_search import WinSearch
-from tryton.gui.window.view_form.widget_search.form import _LIMIT
+from tryton.gui.window.win_form import WinForm
+from tryton.config import CONFIG
 import tryton.common as common
 import gettext
+from tryton.common import RPCExecute, RPCException
+from tryton.common.placeholder_entry import PlaceholderEntry
+from tryton.common.completion import get_completion, update_completion
 
 _ = gettext.gettext
 
 
 class Many2Many(WidgetInterface):
 
-    def __init__(self, window, parent, model, attrs=None):
-        super(Many2Many, self).__init__(window, parent, model, attrs)
+    def __init__(self, field_name, model_name, attrs=None):
+        super(Many2Many, self).__init__(field_name, model_name, attrs=attrs)
 
         self.widget = gtk.VBox(homogeneous=False, spacing=5)
+        self._readonly = True
+        self._position = 0
 
-        hbox = gtk.HBox(homogeneous=False, spacing=3)
-        self.wid_text = gtk.Entry()
+        hbox = gtk.HBox(homogeneous=False, spacing=0)
+        hbox.set_border_width(2)
+
+        label = gtk.Label(attrs.get('string', ''))
+        label.set_alignment(0.0, 0.5)
+        hbox.pack_start(label, expand=True, fill=True)
+
+        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
+
+        tooltips = common.Tooltips()
+
+        self.wid_text = PlaceholderEntry()
+        self.wid_text.set_placeholder_text(_('Search'))
         self.wid_text.set_property('width_chars', 13)
-        self.wid_text.connect('activate', self._sig_activate)
-        self.wid_text.connect('button_press_event', self._menu_open)
+        self.wid_text.connect('focus-out-event', lambda *a: self._focus_out())
+        self.focus_out = True
         hbox.pack_start(self.wid_text, expand=True, fill=True)
 
-        hbox.pack_start(gtk.VSeparator(), padding=2, expand=False, fill=False)
+        if int(self.attrs.get('completion', 1)):
+            self.wid_completion = get_completion()
+            self.wid_completion.connect('match-selected',
+                self._completion_match_selected)
+            self.wid_completion.connect('action-activated',
+                self._completion_action_activated)
+            self.wid_text.set_completion(self.wid_completion)
+            self.wid_text.connect('changed', self._update_completion)
+        else:
+            self.wid_completion = None
 
-        self.wid_but_add = gtk.Button()
-        hbox_add = gtk.HBox()
+        self.but_add = gtk.Button()
+        tooltips.set_tip(self.but_add, _('Add existing record'))
+        self.but_add.connect('clicked', self._sig_add)
         img_add = gtk.Image()
-        img_add.set_from_stock('tryton-list-add', gtk.ICON_SIZE_BUTTON)
-        hbox_add.pack_start(img_add)
-        label_add = gtk.Label(_('Add'))
-        hbox_add.pack_start(label_add)
-        self.wid_but_add.add(hbox_add)
-        self.wid_but_add.set_relief(gtk.RELIEF_HALF)
-        self.wid_but_add.set_focus_on_click(True)
-        self.wid_but_add.connect('clicked', self._sig_add)
-        hbox.pack_start(self.wid_but_add, padding=3, expand=False, fill=False)
+        img_add.set_from_stock('tryton-list-add',
+            gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_add.set_alignment(0.5, 0.5)
+        self.but_add.add(img_add)
+        self.but_add.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_add, expand=False, fill=False)
 
-        self.wid_but_remove = gtk.Button()
-        hbox_remove = gtk.HBox()
+        self.but_remove = gtk.Button()
+        tooltips.set_tip(self.but_remove, _('Remove selected record <Del>'))
+        self.but_remove.connect('clicked', self._sig_remove)
         img_remove = gtk.Image()
-        img_remove.set_from_stock('tryton-list-remove', gtk.ICON_SIZE_BUTTON)
-        hbox_remove.pack_start(img_remove)
-        label_remove = gtk.Label(_('Remove'))
-        hbox_remove.pack_start(label_remove)
-        self.wid_but_remove.add(hbox_remove)
-        self.wid_but_remove.set_relief(gtk.RELIEF_HALF)
-        self.wid_but_remove.set_focus_on_click(True)
-        self.wid_but_remove.connect('clicked', self._sig_remove)
-        hbox.pack_start(self.wid_but_remove, expand=False, fill=False)
+        img_remove.set_from_stock('tryton-list-remove',
+            gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_remove.set_alignment(0.5, 0.5)
+        self.but_remove.add(img_remove)
+        self.but_remove.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_remove, expand=False, fill=False)
 
-        self.widget.pack_start(hbox, expand=False, fill=False)
+        hbox.set_focus_chain([self.wid_text])
 
-        self.screen = Screen(attrs['relation'], self._window,
-                view_type=['tree'], views_preload=attrs.get('views', {}),
-                row_activate=self._on_activate)
+        tooltips.enable()
+
+        frame = gtk.Frame()
+        frame.add(hbox)
+        frame.set_shadow_type(gtk.SHADOW_OUT)
+        self.widget.pack_start(frame, expand=False, fill=True)
+
+        self.screen = Screen(attrs['relation'],
+            view_ids=attrs.get('view_ids', '').split(','),
+            mode=['tree'], views_preload=attrs.get('views', {}),
+            row_activate=self._on_activate)
+        self.screen.signal_connect(self, 'record-message', self._sig_label)
 
         self.widget.pack_start(self.screen.widget, expand=True, fill=True)
 
-        self.old = None
+        self.screen.widget.connect('key_press_event', self.on_keypress)
+        self.wid_text.connect('key_press_event', self.on_keypress)
+
+    def _color_widget(self):
+        if hasattr(self.screen.current_view, 'widget_tree'):
+            return self.screen.current_view.widget_tree
+        return super(Many2Many, self)._color_widget()
 
     def grab_focus(self):
         return self.wid_text.grab_focus()
 
+    def on_keypress(self, widget, event):
+        editable = self.wid_text.get_editable()
+        activate_keys = [gtk.keysyms.Tab, gtk.keysyms.ISO_Left_Tab]
+        if not self.wid_completion:
+            activate_keys.append(gtk.keysyms.Return)
+        if event.keyval == gtk.keysyms.F3:
+            self._sig_add()
+            return True
+        if event.keyval == gtk.keysyms.F2 \
+                and widget == self.screen.widget:
+            self._sig_edit()
+            return True
+        if event.keyval in (gtk.keysyms.Delete, gtk.keysyms.KP_Delete) \
+                and widget == self.screen.widget:
+            self._sig_remove()
+            return True
+        if (widget == self.wid_text
+                and event.keyval in activate_keys
+                and editable
+                and self.wid_text.get_text()):
+            self._sig_add()
+            self.wid_text.grab_focus()
+        return False
+
     def destroy(self):
         self.screen.destroy()
-        self.widget.destroy()
-        del self.widget
 
-    def _sig_add(self, *args):
-        domain = self._view.modelfield.domain_get(self._view.model)
-        context = self._view.modelfield.context_get(self._view.model)
+    def color_set(self, name):
+        super(Many2Many, self).color_set(name)
+        widget = self._color_widget()
+        # if the style to apply is different from readonly then insensitive
+        # cellrenderers should use the default insensitive color
+        if name != 'readonly':
+            widget.modify_text(gtk.STATE_INSENSITIVE,
+                    self.colors['text_color_insensitive'])
+
+    def _sig_add(self, *args, **kwargs):
+        if not self.focus_out:
+            return
+        domain = self.field.domain_get(self.record)
+        add_remove = self.record.expr_eval(self.attrs.get('add_remove'))
+        if add_remove:
+            domain = [domain, add_remove]
+        context = self.field.context_get(self.record)
         value = self.wid_text.get_text()
 
+        self.focus_out = False
         try:
-            ids = rpc.execute('model', self.attrs['relation'], 'search',
-                    [('rec_name', 'ilike', value), domain], 0, _LIMIT,
-                    None, context)
-        except Exception, exception:
-            common.process_exception(exception, self._window)
+            if value:
+                dom = [('rec_name', 'ilike', '%' + value + '%'), domain]
+            else:
+                dom = domain
+            ids = RPCExecute('model', self.attrs['relation'], 'search',
+                dom, 0, CONFIG['client.limit'], None, context=context)
+        except RPCException:
+            self.focus_out = True
             return False
-        if len(ids) != 1 or not value:
-            win = WinSearch(self.attrs['relation'], sel_multi=True, ids=ids,
-                    context=context, domain=domain, parent=self._window,
-                    views_preload=self.attrs.get('views', {}))
-            ids = win.run()
 
-        res_id = None
-        if ids:
-            res_id = ids[0]
-        self.screen.load(ids)
-        self.screen.display(res_id=res_id)
-        if self.screen.current_view:
-            self.screen.current_view.set_cursor()
-        self.wid_text.set_text('')
-        self.set_value(self._view.model, self._view.modelfield)
+        def callback(result):
+            self.focus_out = True
+            if result:
+                ids = [x[0] for x in result]
+                self.screen.load(ids, modified=True)
+                self.screen.display(res_id=ids[0])
+            self.screen.set_cursor()
+            self.wid_text.set_text('')
+        if len(ids) != 1 or not value or kwargs.get('win_search', False):
+            WinSearch(self.attrs['relation'], callback, sel_multi=True,
+                ids=ids, context=context, domain=domain,
+                view_ids=self.attrs.get('view_ids', '').split(','),
+                views_preload=self.attrs.get('views', {}),
+                new=self.attrs.get('create', True))
+        else:
+            callback([(i, None) for i in ids])
 
     def _sig_remove(self, *args):
-        self.screen.remove()
-        self.screen.display()
-        self.set_value(self._view.model, self._view.modelfield)
-
-    def _sig_activate(self, *args):
-        self._sig_add()
-        self.wid_text.grab_focus()
+        self.screen.remove(remove=True)
 
     def _on_activate(self):
         self._sig_edit()
 
     def _sig_edit(self):
-        if self.screen.current_model:
-            readonly = False
-            domain = []
-            if self._view.modelfield and self._view.model:
-                modelfield = self._view.modelfield
-                model = self._view.model
-                readonly = modelfield.get_state_attrs(model
-                        ).get('readonly', False)
-                domain = modelfield.domain_get(self._view.model)
-            dia = Dialog(self.attrs['relation'], parent=self._view.model,
-                    model=self.screen.current_model, attrs=self.attrs,
-                    window=self._window, readonly=readonly, domain=domain)
-            res, record = dia.run()
-            if res:
-                record.save()
-            dia.destroy()
+        if not self.screen.current_record:
+            return
+        # Create a new screen that is not linked to the parent otherwise on the
+        # save of the record will trigger the save of the parent
+        domain = self.field.domain_get(self.record)
+        add_remove = self.record.expr_eval(self.attrs.get('add_remove'))
+        if add_remove:
+            domain = [domain, add_remove]
+        screen = Screen(self.attrs['relation'], domain=domain,
+            view_ids=self.attrs.get('view_ids', '').split(','),
+            mode=['form'], views_preload=self.attrs.get('views', {}))
+        screen.load([self.screen.current_record.id])
+
+        def callback(result):
+            if result:
+                screen.current_record.save()
+                # Force a reload on next display
+                self.screen.current_record.cancel()
+        WinForm(screen, callback)
 
     def _readonly_set(self, value):
-        super(Many2Many, self)._readonly_set(value)
-        self.wid_text.set_editable(not value)
-        self.wid_text.set_sensitive(not value)
-        self.wid_but_remove.set_sensitive(not value)
-        self.wid_but_add.set_sensitive(not value)
+        self._readonly = value
+        self._set_button_sensitive()
 
-    def display(self, model, model_field):
-        super(Many2Many, self).display(model, model_field)
-        ids = []
-        if model_field:
-            ids = model_field.get_client(model)
-        if ids != self.old:
-            self.screen.clear()
-            self.screen.load(ids, set_cursor=False)
-            self.old = ids
+    def _set_button_sensitive(self):
+        if self.record and self.field:
+            field_size = self.record.expr_eval(self.attrs.get('size'))
+            m2m_size = len(self.field.get_eval(self.record))
+            size_limit = (field_size is not None
+                and m2m_size >= field_size >= 0)
+        else:
+            size_limit = False
+
+        self.wid_text.set_sensitive(not self._readonly)
+        self.but_add.set_sensitive(bool(
+                not self._readonly
+                and not size_limit))
+        self.but_remove.set_sensitive(bool(
+                not self._readonly
+                and self._position))
+
+    def _sig_label(self, screen, signal_data):
+        self._position = signal_data[0]
+        self._set_button_sensitive()
+
+    def display(self, record, field):
+        super(Many2Many, self).display(record, field)
+        if field is None:
+            self.screen.new_group()
+            self.screen.current_record = None
+            self.screen.parent = None
+            self.screen.display()
+            return False
+        new_group = field.get_client(record)
+        if id(self.screen.group) != id(new_group):
+            self.screen.group = new_group
         self.screen.display()
         return True
 
-    def display_value(self):
-        return self._view.modelfield.rec_name(self._view.model)
+    def set_value(self, record, field):
+        self.screen.save_tree_state()
+        self.screen.current_view.set_value()
+        return True
 
-    def set_value(self, model, model_field):
-        model_field.set_client(model, [x.id for x in self.screen.models.models])
+    def _completion_match_selected(self, completion, model, iter_):
+        record_id, = model.get(iter_, 1)
+        self.screen.load([record_id], modified=True)
+        self.wid_text.set_text('')
+        self.wid_text.grab_focus()
 
-    def cancel(self):
-        self.old = None
+        completion_model = self.wid_completion.get_model()
+        completion_model.clear()
+        completion_model.search_text = self.wid_text.get_text()
+        return True
+
+    def _update_completion(self, widget):
+        if self._readonly:
+            return
+        if not self.record:
+            return
+        model = self.attrs['relation']
+        update_completion(self.wid_text, self.record, self.field, model)
+
+    def _completion_action_activated(self, completion, index):
+        if index == 0:
+            self._sig_add(win_search=True)
+            self.wid_text.grab_focus()
+        elif index == 1:
+            model = self.attrs['relation']
+            domain = self.field.domain_get(self.record)
+            add_remove = self.record.expr_eval(self.attrs.get('add_remove'))
+            if add_remove:
+                domain = [domain, add_remove]
+            context = self.field.context_get(self.record)
+
+            screen = Screen(model, domain, context=context, mode=['form'])
+
+            def callback(result):
+                self.focus_out = True
+                if result:
+                    record = screen.current_record
+                    self.screen.load([record.id], modified=True)
+                self.wid_text.set_text('')
+                self.wid_text.grab_focus()
+
+            self.focus_out = False
+            WinForm(screen, callback, new=True, save_current=True)
