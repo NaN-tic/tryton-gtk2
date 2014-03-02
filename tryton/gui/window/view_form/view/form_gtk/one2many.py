@@ -2,500 +2,231 @@
 #this repository contains the full copyright notices and license terms.
 import gtk
 import gettext
-from tryton.common import TRYTON_ICON, COLOR_SCHEMES
+
 from interface import WidgetInterface
 from tryton.gui.window.view_form.screen import Screen
-from tryton.gui.window.view_form.model.group import ModelRecordGroup
 from tryton.gui.window.win_search import WinSearch
-from tryton.gui.window.view_form.widget_search.form import _LIMIT
+from tryton.gui.window.win_form import WinForm
+from tryton.config import CONFIG
 import tryton.common as common
-import tryton.rpc as rpc
-import pango
+from tryton.common import RPCExecute, RPCException
+from tryton.common.placeholder_entry import PlaceholderEntry
+from tryton.common.completion import get_completion, update_completion
 
 _ = gettext.gettext
-
-def _create_menu(self, attrs):
-    hbox = gtk.HBox(homogeneous=False, spacing=0)
-    menubar = gtk.MenuBar()
-    if hasattr(menubar, 'set_pack_direction') and \
-            hasattr(menubar, 'set_child_pack_direction'):
-        menubar.set_pack_direction(gtk.PACK_DIRECTION_LTR)
-        menubar.set_child_pack_direction(gtk.PACK_DIRECTION_LTR)
-
-    menuitem_title = gtk.ImageMenuItem(stock_id='tryton-preferences')
-
-    menu_title = gtk.Menu()
-    menuitem_set_to_default = gtk.MenuItem(_('Set to default value'), True)
-    menuitem_set_to_default.connect('activate',
-            lambda *x: self._menu_sig_default_get())
-    menu_title.add(menuitem_set_to_default)
-    menuitem_set_default = gtk.MenuItem(_('Set Default'), True)
-    menuitem_set_default.connect('activate',
-            lambda *x: self._menu_sig_default_set())
-    menu_title.add(menuitem_set_default)
-    menuitem_title.set_submenu(menu_title)
-
-    menubar.add(menuitem_title)
-    hbox.pack_start(menubar, expand=True, fill=True)
-
-    tooltips = common.Tooltips()
-
-    if attrs.get('add_remove'):
-
-        self.wid_text = gtk.Entry()
-        self.wid_text.set_property('width_chars', 13)
-        self.wid_text.connect('activate', self._sig_activate)
-        hbox.pack_start(self.wid_text, expand=True, fill=True)
-
-        self.but_add = gtk.Button()
-        tooltips.set_tip(self.but_add, _('Add'))
-        self.but_add.connect('clicked', self._sig_add)
-        img_add = gtk.Image()
-        img_add.set_from_stock('tryton-list-add', gtk.ICON_SIZE_SMALL_TOOLBAR)
-        img_add.set_alignment(0.5, 0.5)
-        self.but_add.add(img_add)
-        self.but_add.set_relief(gtk.RELIEF_NONE)
-        hbox.pack_start(self.but_add, expand=False, fill=False)
-
-        self.but_remove = gtk.Button()
-        tooltips.set_tip(self.but_remove, _('Remove'))
-        self.but_remove.connect('clicked', self._sig_remove, True)
-        img_remove = gtk.Image()
-        img_remove.set_from_stock('tryton-list-remove', gtk.ICON_SIZE_SMALL_TOOLBAR)
-        img_remove.set_alignment(0.5, 0.5)
-        self.but_remove.add(img_remove)
-        self.but_remove.set_relief(gtk.RELIEF_NONE)
-        hbox.pack_start(self.but_remove, expand=False, fill=False)
-
-        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
-
-    self.but_new = gtk.Button()
-    tooltips.set_tip(self.but_new, _('Create a new record'))
-    self.but_new.connect('clicked', self._sig_new)
-    img_new = gtk.Image()
-    img_new.set_from_stock('tryton-new', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_new.set_alignment(0.5, 0.5)
-    self.but_new.add(img_new)
-    self.but_new.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(self.but_new, expand=False, fill=False)
-
-    self.but_open = gtk.Button()
-    tooltips.set_tip(self.but_open, _('Edit selected record'))
-    self.but_open.connect('clicked', self._sig_edit)
-    img_open = gtk.Image()
-    img_open.set_from_stock('tryton-open', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_open.set_alignment(0.5, 0.5)
-    self.but_open.add(img_open)
-    self.but_open.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(self.but_open, expand=False, fill=False)
-
-    self.but_del = gtk.Button()
-    tooltips.set_tip(self.but_del, _('Delete selected record'))
-    self.but_del.connect('clicked', self._sig_remove)
-    img_del = gtk.Image()
-    img_del.set_from_stock('tryton-delete', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_del.set_alignment(0.5, 0.5)
-    self.but_del.add(img_del)
-    self.but_del.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(self.but_del, expand=False, fill=False)
-
-    hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
-
-    but_pre = gtk.Button()
-    tooltips.set_tip(but_pre, _('Previous'))
-    but_pre.connect('clicked', self._sig_previous)
-    img_pre = gtk.Image()
-    img_pre.set_from_stock('tryton-go-previous', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_pre.set_alignment(0.5, 0.5)
-    but_pre.add(img_pre)
-    but_pre.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(but_pre, expand=False, fill=False)
-
-    self.label = gtk.Label('(0,0)')
-    hbox.pack_start(self.label, expand=False, fill=False)
-
-    but_next = gtk.Button()
-    tooltips.set_tip(but_next, _('Next'))
-    but_next.connect('clicked', self._sig_next)
-    img_next = gtk.Image()
-    img_next.set_from_stock('tryton-go-next', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_next.set_alignment(0.5, 0.5)
-    but_next.add(img_next)
-    but_next.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(but_next, expand=False, fill=False)
-
-    hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
-
-    but_switch = gtk.Button()
-    tooltips.set_tip(but_switch, _('Switch'))
-    but_switch.connect('clicked', self.switch_view)
-    img_switch = gtk.Image()
-    img_switch.set_from_stock('tryton-fullscreen', gtk.ICON_SIZE_SMALL_TOOLBAR)
-    img_switch.set_alignment(0.5, 0.5)
-    but_switch.add(img_switch)
-    but_switch.set_relief(gtk.RELIEF_NONE)
-    hbox.pack_start(but_switch, expand=False, fill=False)
-
-    if attrs.get('add_remove'):
-        hbox.set_focus_chain([self.wid_text])
-    else:
-        hbox.set_focus_chain([])
-
-    tooltips.enable()
-
-    return hbox, menuitem_title
-
-
-class Dialog(object):
-
-    def __init__(self, model_name, parent, model=None, attrs=None,
-            model_ctx=None, window=None, default_get_ctx=None, readonly=False,
-            domain=None):
-
-        if attrs is None:
-            attrs = {}
-        if model_ctx is None:
-            model_ctx = {}
-        if default_get_ctx is None:
-            default_get_ctx = {}
-
-        self.attrs = attrs
-        self.model_name = model_name
-        self.parent=parent
-        self.model_ctx = model_ctx
-        self.default_get_ctx = default_get_ctx
-
-        self.dia = gtk.Dialog(_('Link'), window,
-                gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT)
-        self.dia.connect('close', self._sig_close)
-        self.window = window
-        self.dia.set_property('default-width', 760)
-        self.dia.set_property('default-height', 500)
-        self.dia.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
-        self.dia.set_icon(TRYTON_ICON)
-        self.dia.set_has_separator(False)
-
-        self.accel_group = gtk.AccelGroup()
-        self.dia.add_accel_group(self.accel_group)
-
-        self.but_cancel = None
-        if not model:
-            icon_cancel = gtk.STOCK_CANCEL
-            self.but_cancel = self.dia.add_button(icon_cancel,
-                    gtk.RESPONSE_CANCEL)
-
-        self.but_ok = self.dia.add_button(gtk.STOCK_OK, gtk.RESPONSE_OK)
-        self.but_ok.add_accelerator('clicked', self.accel_group,
-                gtk.keysyms.Return, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
-
-        self.dia.set_default_response(gtk.RESPONSE_OK)
-
-        self.default_get_ctx = default_get_ctx
-
-        menuitem_title = None
-        if isinstance(model, ModelRecordGroup):
-            hbox, menuitem_title = _create_menu(self, attrs)
-            self.dia.vbox.pack_start(hbox, expand=False, fill=True)
-        self.dia.show()
-
-        self.screen = Screen(model_name, self.dia, view_type=[], parent=parent,
-                parent_name=attrs.get('relation_field', ''),
-                exclude_field=attrs.get('relation_field', None), readonly=readonly,
-                domain=domain)
-        self.screen.models._context.update(model_ctx)
-        modified = False
-        if not model:
-            model = self.screen.new(context=default_get_ctx)
-            modified = True
-        if isinstance(model, ModelRecordGroup):
-            self.screen.tree_saves = False
-            self.screen.add_view_id(False, 'tree', display=True,
-                    context=default_get_ctx)
-            self.screen.add_view_id(False, 'form', display=False,
-                    context=default_get_ctx)
-            self.screen.signal_connect(self, 'record-message', self._sig_label)
-            self.screen.widget.connect('key_press_event', self.on_keypress)
-            self.screen.models_set(model)
-        else:
-            self.screen.models.model_add(model, modified=modified)
-            self.screen.current_model = model
-            if ('views' in attrs) and ('form' in attrs['views']):
-                arch = attrs['views']['form']['arch']
-                fields = attrs['views']['form']['fields']
-                if attrs.get('relation_field', False) \
-                        and attrs['relation_field'] in fields:
-                    del fields[attrs['relation_field']]
-                self.screen.add_view(arch, fields, display=True,
-                        context=default_get_ctx)
-            else:
-                self.screen.add_view_id(False, 'form', display=True,
-                        context=default_get_ctx)
-
-        name = self.screen.current_view.title
-        self.dia.set_title(name)
-        if menuitem_title:
-            menuitem_title.get_child().set_text(name)
-
-        title = gtk.Label()
-        title.set_use_markup(True)
-        title.modify_font(pango.FontDescription("12"))
-        title.set_label('<b>' + name + '</b>')
-        title.set_padding(20, 3)
-        title.set_alignment(0.0, 0.5)
-        title.modify_fg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#000000"))
-        title.show()
-
-        self.info_label = gtk.Label()
-        self.info_label.set_padding(3, 3)
-        self.info_label.set_alignment(1.0, 0.5)
-
-        self.eb_info = gtk.EventBox()
-        self.eb_info.add(self.info_label)
-        self.eb_info.connect('button-release-event',
-                lambda *a: self.message_info(''))
-
-        vbox = gtk.VBox()
-        vbox.pack_start(self.eb_info, expand=True, fill=True, padding=5)
-        vbox.show()
-
-        hbox = gtk.HBox()
-        hbox.pack_start(title, expand=True, fill=True)
-        hbox.pack_start(vbox, expand=False, fill=True, padding=20)
-        hbox.show()
-
-        frame = gtk.Frame()
-        frame.set_shadow_type(gtk.SHADOW_ETCHED_IN)
-        frame.add(hbox)
-        frame.show()
-
-        eb = gtk.EventBox()
-        eb.add(frame)
-        eb.modify_bg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#ffffff"))
-        eb.show()
-
-        self.dia.vbox.pack_start(eb, expand=False, fill=True, padding=3)
-
-        scroll = gtk.ScrolledWindow()
-        scroll.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
-        scroll.set_placement(gtk.CORNER_TOP_LEFT)
-        scroll.set_shadow_type(gtk.SHADOW_NONE)
-        scroll.show()
-        self.dia.vbox.pack_start(scroll, expand=True, fill=True)
-
-        viewport = gtk.Viewport()
-        viewport.set_shadow_type(gtk.SHADOW_NONE)
-        viewport.show()
-        scroll.add(viewport)
-
-        self.screen.widget.show()
-        viewport.add(self.screen.widget)
-
-        width, height = self.screen.screen_container.size_get()
-        viewport.set_size_request(width, height + 30)
-        self.screen.display()
-        self.screen.current_view.set_cursor()
-
-    def message_info(self, message, color='red'):
-        if message:
-            self.info_label.set_label(message)
-            self.eb_info.modify_bg(gtk.STATE_NORMAL, gtk.gdk.color_parse(
-                COLOR_SCHEMES.get(color, 'white')))
-            self.eb_info.show_all()
-        else:
-            self.info_label.set_label('')
-            self.eb_info.hide()
-
-    def on_keypress(self, widget, event):
-        if self.attrs.get('add_remove') \
-                and event.keyval == gtk.keysyms.F3 \
-                and self.but_add.get_property('sensitive'):
-            self._sig_add()
-            return False
-        if ((event.keyval in (gtk.keysyms.N, gtk.keysyms.n) \
-                and event.state & gtk.gdk.CONTROL_MASK) \
-                or event.keyval == gtk.keysyms.F3) \
-                and self.but_new.get_property('sensitive'):
-            self._sig_new(widget)
-            return False
-        if event.keyval == gtk.keysyms.F2:
-            self._sig_edit(widget)
-            return False
-        if (event.keyval in (gtk.keysyms.L, gtk.keysyms.l) \
-                and event.state & gtk.gdk.CONTROL_MASK):
-            self.switch_view(widget)
-            return False
-
-    def switch_view(self, widget):
-        self.screen.switch_view()
-
-    def _sig_new(self, widget):
-        if (self.screen.current_view.view_type == 'form') \
-                or self.screen.editable_get():
-            self.screen.new(context=self.default_get_ctx)
-            self.screen.current_view.widget.set_sensitive(True)
-        else:
-            dia = Dialog(self.model_name, parent=self.parent,
-                    attrs=self.attrs, model_ctx=self.model_ctx,
-                    default_get_ctx=self.default_get_ctx,
-                    window=self.window)
-            res = True
-            while res:
-                res, value = dia.run()
-                if res:
-                    self.screen.models.model_add(value)
-                    value.signal('record-changed', value.parent)
-                    self.screen.display()
-                    dia.new()
-            dia.destroy()
-
-    def _sig_edit(self, widget=None):
-        if self.screen.current_model:
-            dia = Dialog(self.model_name, parent=self.parent,
-                    model=self.screen.current_model, attrs=self.attrs,
-                    window=self.window)
-            res, value = dia.run()
-            dia.destroy()
-
-    def _sig_next(self, widget):
-        self.screen.display_next()
-
-    def _sig_previous(self, widget):
-        self.screen.display_prev()
-
-    def _sig_remove(self, widget, remove=False):
-        self.screen.remove(remove=remove)
-
-    def _sig_activate(self, *args):
-        self._sig_add()
-        self.wid_text.grab_focus()
-
-    def _sig_add(self, *args):
-        domain = []
-        context = rpc.CONTEXT.copy()
-
-        try:
-            ids = rpc.execute('model', self.attrs['relation'],
-                    'search',
-                    [('rec_name', 'ilike', self.wid_text.get_text()), domaini],
-                    0, _LIMIT, None, context)
-        except Exception, exception:
-            common.process_exception(exception, self._window)
-            return False
-        if len(ids) != 1:
-            win = WinSearch(self.attrs['relation'], sel_multi=True, ids=ids,
-                    context=context, domain=domain, parent=self._window,
-                    views_preload=self.attrs.get('views', {}))
-            ids = win.run()
-
-        res_id = None
-        if ids:
-            res_id = ids[0]
-        self.screen.load(ids, modified=True)
-        self.screen.display(res_id=res_id)
-        if self.screen.current_view:
-            self.screen.current_view.set_cursor()
-        self.wid_text.set_text('')
-
-    def _sig_label(self, screen, signal_data):
-        name = '_'
-        if signal_data[0] >= 0:
-            name = str(signal_data[0] + 1)
-        line = '(%s/%s)' % (name, signal_data[1])
-        self.label.set_text(line)
-
-    def _menu_sig_default_get(self):
-        pass
-
-    def _menu_sig_default_set(self):
-        pass
-
-    def new(self):
-        model = self.screen.new(context=self.default_get_ctx)
-        self.screen.models.model_add(model)
-        return True
-
-    def run(self):
-        end = False
-        while not end:
-            res = self.dia.run()
-            self.screen.current_view.set_value()
-            end = (res != gtk.RESPONSE_OK) \
-                    or (not self.screen.current_model \
-                        or self.screen.current_model.validate())
-            if not end:
-                self.screen.current_view.set_cursor()
-                self.screen.display()
-            if self.but_cancel:
-                self.but_cancel.set_label(gtk.STOCK_CLOSE)
-
-        if res == gtk.RESPONSE_OK:
-            model = self.screen.current_model
-            return (True, model)
-        return (False, None)
-
-    def _sig_close(self, widget):
-        if self.screen.current_view:
-            self.screen.current_view.set_value()
-        if not self.but_cancel \
-                and self.screen.current_model \
-                and not self.screen.current_model.validate():
-            if self.screen.current_view:
-                self.screen.current_view.set_cursor()
-            self.screen.display()
-            widget.emit_stop_by_name('close')
-
-    def destroy(self):
-        self.screen.signal_unconnect(self)
-        self.window.present()
-        self.dia.destroy()
-        self.screen.destroy()
 
 
 class One2Many(WidgetInterface):
 
-    def __init__(self, window, parent, model, attrs=None):
-        super(One2Many, self).__init__(window, parent, model, attrs)
+    def __init__(self, field_name, model_name, attrs=None):
+        super(One2Many, self).__init__(field_name, model_name, attrs=attrs)
 
-        self.widget = gtk.VBox(homogeneous=False, spacing=5)
+        self.widget = gtk.VBox(homogeneous=False, spacing=2)
+        self._readonly = True
+        self._position = 0
+        self._length = 0
 
-        hbox, menuitem_title = _create_menu(self, attrs)
+        hbox = gtk.HBox(homogeneous=False, spacing=0)
+        hbox.set_border_width(2)
 
-        self.widget.pack_start(hbox, expand=False, fill=True)
+        label = gtk.Label(attrs.get('string', ''))
+        label.set_alignment(0.0, 0.5)
+        hbox.pack_start(label, expand=True, fill=True)
 
-        self.screen = Screen(attrs['relation'], self._window,
-                view_type=attrs.get('mode','tree,form').split(','),
-                parent=self.parent, parent_name=attrs.get('relation_field', ''),
-                views_preload=attrs.get('views', {}),
-                tree_saves=attrs.get('saves', False), create_new=True,
-                row_activate=self._on_activate,
-                default_get=attrs.get('default_get', {}),
-                exclude_field=attrs.get('relation_field', None))
+        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
+
+        tooltips = common.Tooltips()
+
+        self.focus_out = True
+        self.wid_completion = None
+        if attrs.get('add_remove'):
+
+            self.wid_text = PlaceholderEntry()
+            self.wid_text.set_placeholder_text(_('Search'))
+            self.wid_text.set_property('width_chars', 13)
+            self.wid_text.connect('focus-out-event',
+                lambda *a: self._focus_out())
+            hbox.pack_start(self.wid_text, expand=True, fill=True)
+
+            if int(self.attrs.get('completion', 1)):
+                self.wid_completion = get_completion()
+                self.wid_completion.connect('match-selected',
+                    self._completion_match_selected)
+                self.wid_completion.connect('action-activated',
+                    self._completion_action_activated)
+                self.wid_text.set_completion(self.wid_completion)
+                self.wid_text.connect('changed', self._update_completion)
+
+            self.but_add = gtk.Button()
+            tooltips.set_tip(self.but_add, _('Add existing record'))
+            self.but_add.connect('clicked', self._sig_add)
+            img_add = gtk.Image()
+            img_add.set_from_stock('tryton-list-add',
+                gtk.ICON_SIZE_SMALL_TOOLBAR)
+            img_add.set_alignment(0.5, 0.5)
+            self.but_add.add(img_add)
+            self.but_add.set_relief(gtk.RELIEF_NONE)
+            hbox.pack_start(self.but_add, expand=False, fill=False)
+
+            self.but_remove = gtk.Button()
+            tooltips.set_tip(self.but_remove,
+                _('Remove selected record'))
+            self.but_remove.connect('clicked', self._sig_remove, True)
+            img_remove = gtk.Image()
+            img_remove.set_from_stock('tryton-list-remove',
+                gtk.ICON_SIZE_SMALL_TOOLBAR)
+            img_remove.set_alignment(0.5, 0.5)
+            self.but_remove.add(img_remove)
+            self.but_remove.set_relief(gtk.RELIEF_NONE)
+            hbox.pack_start(self.but_remove, expand=False, fill=False)
+
+            hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
+
+        self.but_new = gtk.Button()
+        tooltips.set_tip(self.but_new, _('Create a new record <F3>'))
+        self.but_new.connect('clicked', self._sig_new)
+        img_new = gtk.Image()
+        img_new.set_from_stock('tryton-new', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_new.set_alignment(0.5, 0.5)
+        self.but_new.add(img_new)
+        self.but_new.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_new, expand=False, fill=False)
+
+        self.but_open = gtk.Button()
+        tooltips.set_tip(self.but_open, _('Edit selected record <F2>'))
+        self.but_open.connect('clicked', self._sig_edit)
+        img_open = gtk.Image()
+        img_open.set_from_stock('tryton-open', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_open.set_alignment(0.5, 0.5)
+        self.but_open.add(img_open)
+        self.but_open.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_open, expand=False, fill=False)
+
+        self.but_del = gtk.Button()
+        tooltips.set_tip(self.but_del, _('Delete selected record <Del>'))
+        self.but_del.connect('clicked', self._sig_remove, False)
+        img_del = gtk.Image()
+        img_del.set_from_stock('tryton-delete', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_del.set_alignment(0.5, 0.5)
+        self.but_del.add(img_del)
+        self.but_del.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_del, expand=False, fill=False)
+
+        self.but_undel = gtk.Button()
+        tooltips.set_tip(self.but_undel, _('Undelete selected record <Ins>'))
+        self.but_undel.connect('clicked', self._sig_undelete)
+        img_undel = gtk.Image()
+        img_undel.set_from_stock('tryton-undo', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_undel.set_alignment(0.5, 0.5)
+        self.but_undel.add(img_undel)
+        self.but_undel.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_undel, expand=False, fill=False)
+
+        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
+
+        self.but_pre = gtk.Button()
+        tooltips.set_tip(self.but_pre, _('Previous'))
+        self.but_pre.connect('clicked', self._sig_previous)
+        img_pre = gtk.Image()
+        img_pre.set_from_stock('tryton-go-previous',
+            gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_pre.set_alignment(0.5, 0.5)
+        self.but_pre.add(img_pre)
+        self.but_pre.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_pre, expand=False, fill=False)
+
+        self.label = gtk.Label('(0,0)')
+        hbox.pack_start(self.label, expand=False, fill=False)
+
+        self.but_next = gtk.Button()
+        tooltips.set_tip(self.but_next, _('Next'))
+        self.but_next.connect('clicked', self._sig_next)
+        img_next = gtk.Image()
+        img_next.set_from_stock('tryton-go-next', gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_next.set_alignment(0.5, 0.5)
+        self.but_next.add(img_next)
+        self.but_next.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(self.but_next, expand=False, fill=False)
+
+        hbox.pack_start(gtk.VSeparator(), expand=False, fill=True)
+
+        but_switch = gtk.Button()
+        tooltips.set_tip(but_switch, _('Switch'))
+        but_switch.connect('clicked', self.switch_view)
+        img_switch = gtk.Image()
+        img_switch.set_from_stock('tryton-fullscreen',
+            gtk.ICON_SIZE_SMALL_TOOLBAR)
+        img_switch.set_alignment(0.5, 0.5)
+        but_switch.add(img_switch)
+        but_switch.set_relief(gtk.RELIEF_NONE)
+        hbox.pack_start(but_switch, expand=False, fill=False)
+
+        if attrs.get('add_remove'):
+            hbox.set_focus_chain([self.wid_text])
+        else:
+            hbox.set_focus_chain([])
+
+        tooltips.enable()
+
+        frame = gtk.Frame()
+        frame.add(hbox)
+        frame.set_shadow_type(gtk.SHADOW_OUT)
+        self.widget.pack_start(frame, expand=False, fill=True)
+
+        self.screen = Screen(attrs['relation'],
+            mode=attrs.get('mode', 'tree,form').split(','),
+            view_ids=attrs.get('view_ids', '').split(','),
+            views_preload=attrs.get('views', {}),
+            row_activate=self._on_activate,
+            exclude_field=attrs.get('relation_field', None))
+        self.screen.pre_validate = bool(int(attrs.get('pre_validate', 0)))
         self.screen.signal_connect(self, 'record-message', self._sig_label)
-        menuitem_title.get_child().set_text(attrs.get('string', ''))
 
         self.widget.pack_start(self.screen.widget, expand=True, fill=True)
 
         self.screen.widget.connect('key_press_event', self.on_keypress)
+        if self.attrs.get('add_remove'):
+            self.wid_text.connect('key_press_event', self.on_keypress)
+
+        but_switch.props.sensitive = self.screen.number_of_views > 1
+
+    def _color_widget(self):
+        if hasattr(self.screen.current_view, 'widget_tree'):
+            return self.screen.current_view.widget_tree
+        return super(One2Many, self)._color_widget()
 
     def grab_focus(self):
         return self.screen.widget.grab_focus()
 
     def on_keypress(self, widget, event):
-        if self.attrs.get('add_remove') \
-                and event.keyval == gtk.keysyms.F3 \
-                and self.but_add.get_property('sensitive'):
-            self._sig_add()
-            return False
-        if ((event.keyval == gtk.keysyms.N \
-                    and event.state & gtk.gdk.CONTROL_MASK \
-                    and event.state & gtk.gdk.SHIFT_MASK) \
-                or event.keyval == gtk.keysyms.F3) \
+        if (event.keyval == gtk.keysyms.F3) \
                 and self.but_new.get_property('sensitive'):
             self._sig_new(widget)
-            return False
-        if event.keyval == gtk.keysyms.F2:
+            return True
+        if event.keyval == gtk.keysyms.F2 \
+                and widget == self.screen.widget:
             self._sig_edit(widget)
-            return False
+            return True
+        if (event.keyval in (gtk.keysyms.Delete, gtk.keysyms.KP_Delete)
+                and widget == self.screen.widget
+                and self.but_del.get_property('sensitive')):
+            self._sig_remove(widget)
+            return True
+        if event.keyval == gtk.keysyms.Insert and widget == self.screen.widget:
+            self._sig_undelete(widget)
+            return True
+        if self.attrs.get('add_remove'):
+            editable = self.wid_text.get_editable()
+            activate_keys = [gtk.keysyms.Tab, gtk.keysyms.ISO_Left_Tab]
+            if not self.wid_completion:
+                activate_keys.append(gtk.keysyms.Return)
+            if (widget == self.wid_text
+                    and event.keyval in activate_keys
+                    and editable
+                    and self.wid_text.get_text()):
+                self._sig_add()
+                self.wid_text.grab_focus()
+        return False
 
     def destroy(self):
         self.screen.destroy()
@@ -505,163 +236,272 @@ class One2Many(WidgetInterface):
 
     def switch_view(self, widget):
         self.screen.switch_view()
+        self.color_set(self.color_name)
+
+    @property
+    def modified(self):
+        return self.screen.current_view.modified
+
+    def color_set(self, name):
+        super(One2Many, self).color_set(name)
+        widget = self._color_widget()
+        # if the style to apply is different from readonly then insensitive
+        # cellrenderers should use the default insensitive color
+        if name != 'readonly':
+            widget.modify_text(gtk.STATE_INSENSITIVE,
+                    self.colors['text_color_insensitive'])
 
     def _readonly_set(self, value):
-        self.but_new.set_sensitive(not value)
-        self.but_del.set_sensitive(not value)
-        if self.attrs.get('add_remove'):
-            self.wid_text.set_sensitive(not value)
-            self.but_add.set_sensitive(not value)
-            self.but_remove.set_sensitive(not value)
+        self._readonly = value
+        self._set_button_sensitive()
 
-    def _sig_new(self, widget):
-        self._view.view_form.set_value()
-        ctx = self._view.model.expr_eval(self.screen.default_get)
-        ctx.update(self._view.model.expr_eval('dict(%s)' % \
-                self.attrs.get('context', '')))
-        sequence = None
-        idx = -1
-        if self.screen.current_view.view_type == 'tree':
-            sequence = self.screen.current_view.widget_tree.sequence
-            select_ids = self.screen.sel_ids_get()
-            if select_ids:
-                model = self.screen.models.get_by_id(select_ids[0])
-                idx = self.screen.models.models.index(model)
-        if (self.screen.current_view.view_type == 'form') \
-                or self.screen.editable_get():
-            self.screen.new(context=ctx)
-            self.screen.current_view.widget.set_sensitive(True)
+    def _set_button_sensitive(self):
+        access = common.MODELACCESS[self.screen.model_name]
+        if self.record and self.field:
+            field_size = self.record.expr_eval(self.attrs.get('size'))
+            o2m_size = len(self.field.get_eval(self.record))
+            size_limit = (field_size is not None
+                and o2m_size >= field_size >= 0)
         else:
-            readonly = False
-            domain = []
-            if self._view.modelfield and self._view.model:
-                modelfield = self._view.modelfield
-                model = self._view.model
-                readonly = modelfield.get_state_attrs(model
-                        ).get('readonly', False)
-                domain = modelfield.domain_get(self._view.model)
-            dia = Dialog(self.attrs['relation'], parent=self._view.model,
-                    attrs=self.attrs,
-                    model_ctx=self.screen.models._context,
-                    default_get_ctx=ctx, window=self._window,
-                    readonly=readonly, domain=domain)
-            res = True
-            while res:
-                res, value = dia.run()
-                if res:
-                    if idx >= 0:
-                        idx += 1
-                    self.screen.models.model_add(value, position=idx)
-                    value.signal('record-changed', value.parent)
-                    self.screen.display_next()
-                    dia.new()
-            dia.destroy()
-        if sequence:
-            self.screen.models.set_sequence(field=sequence)
+            size_limit = False
+
+        self.but_new.set_sensitive(bool(
+                not self._readonly
+                and self.attrs.get('create', True)
+                and not size_limit
+                and access['create']))
+        self.but_del.set_sensitive(bool(
+                not self._readonly
+                and self.attrs.get('delete', True)
+                and self._position
+                and access['delete']))
+        self.but_undel.set_sensitive(bool(
+                not self._readonly
+                and not size_limit
+                and self._position))
+        self.but_open.set_sensitive(bool(
+                self._position
+                and access['read']))
+        self.but_next.set_sensitive(bool(
+                self._position
+                and self._position < self._length))
+        self.but_pre.set_sensitive(bool(
+                self._position
+                and self._position > 1))
+        if self.attrs.get('add_remove'):
+            self.wid_text.set_sensitive(not self._readonly)
+            self.but_add.set_sensitive(bool(
+                    not self._readonly
+                    and not size_limit
+                    and access['write']
+                    and access['read']))
+            self.but_remove.set_sensitive(bool(
+                    not self._readonly
+                    and self._position
+                    and access['write']
+                    and access['read']))
+
+    def _validate(self):
+        self.view.set_value()
+        record = self.screen.current_record
+        if record:
+            fields = self.screen.current_view.get_fields()
+            if not record.validate(fields):
+                self.screen.display(set_cursor=True)
+                return False
+            if self.screen.pre_validate and not record.pre_validate():
+                return False
+        return True
+
+    def _sig_new(self, widget=None):
+        if not common.MODELACCESS[self.screen.model_name]['create']:
+            return
+        if not self._validate():
+            return
+        ctx = {}
+        ctx.update(self.field.context_get(self.record))
+        sequence = None
+        for view in self.screen.views:
+            if view.view_type == 'tree':
+                sequence = view.widget_tree.sequence
+                if sequence:
+                    break
+
+        def update_sequence():
+            if sequence:
+                self.screen.group.set_sequence(field=sequence)
+
+        if self.screen.current_view.editable:
+            self.screen.new()
+            self.screen.current_view.widget.set_sensitive(True)
+            update_sequence()
+        else:
+            field_size = self.record.expr_eval(self.attrs.get('size')) or -1
+            field_size -= len(self.field.get_eval(self.record)) + 1
+            WinForm(self.screen, lambda a: update_sequence(), new=True,
+                many=field_size, context=ctx)
 
     def _sig_edit(self, widget=None):
-        self._view.view_form.set_value()
-        if self.screen.current_model:
-            readonly = False
-            domain = []
-            if self._view.modelfield and self._view.model:
-                modelfield = self._view.modelfield
-                model = self._view.model
-                readonly = modelfield.get_state_attrs(model
-                        ).get('readonly', False)
-                domain = modelfield.domain_get(self._view.model)
-            dia = Dialog(self.attrs['relation'], parent=self._view.model,
-                    model=self.screen.current_model, attrs=self.attrs,
-                    window=self._window, readonly=readonly, domain=domain)
-            res, value = dia.run()
-            dia.destroy()
+        if not common.MODELACCESS[self.screen.model_name]['read']:
+            return
+        if not self._validate():
+            return
+        record = self.screen.current_record
+        if record:
+            WinForm(self.screen, lambda a: None)
 
     def _sig_next(self, widget):
+        if not self._validate():
+            return
         self.screen.display_next()
 
     def _sig_previous(self, widget):
+        if not self._validate():
+            return
         self.screen.display_prev()
 
     def _sig_remove(self, widget, remove=False):
+        access = common.MODELACCESS[self.screen.model_name]
+        if remove:
+            if not access['write'] or not access['read']:
+                return
+        else:
+            if not access['delete']:
+                return
         self.screen.remove(remove=remove)
 
-    def _sig_activate(self, *args):
-        self._sig_add()
-        self.wid_text.grab_focus()
+    def _sig_undelete(self, button):
+        self.screen.unremove()
 
-    def _sig_add(self, *args):
-        self._view.view_form.set_value()
-        domain = self._view.modelfield.domain_get(self._view.model)
-        context = rpc.CONTEXT.copy()
-        context.update(self._view.modelfield.context_get(self._view.model))
-        domain = domain[:]
-        domain.extend(self._view.model.expr_eval(self.attrs.get('add_remove'),
-            context))
-        removed_ids = self._view.modelfield.get_removed_ids(self._view.model)
+    def _sig_add(self, *args, **kwargs):
+        if not self.focus_out:
+            return
+        access = common.MODELACCESS[self.screen.model_name]
+        if not access['write'] or not access['read']:
+            return
+        self.view.set_value()
+        domain = self.field.domain_get(self.record)
+        context = self.field.context_get(self.record)
+        domain = [domain, self.record.expr_eval(self.attrs.get('add_remove'))]
+        removed_ids = self.field.get_removed_ids(self.record)
 
+        self.focus_out = False
         try:
-            ids = rpc.execute('model', self.attrs['relation'],
-                    'search',
-                    [('rec_name', 'ilike', self.wid_text.get_text()),
-                    ['OR', domain, ('id', 'in', removed_ids)]],
-                    0, _LIMIT, None, context)
-        except Exception, exception:
-            common.process_exception(exception, self._window)
+            if self.wid_text.get_text():
+                dom = [('rec_name', 'ilike',
+                        '%' + self.wid_text.get_text() + '%'),
+                    ['OR', domain, ('id', 'in', removed_ids)]]
+            else:
+                dom = ['OR', domain, ('id', 'in', removed_ids)]
+            ids = RPCExecute('model', self.attrs['relation'], 'search', dom,
+                    0, CONFIG['client.limit'], None, context=context)
+        except RPCException:
+            self.focus_out = True
             return False
-        if len(ids) != 1:
-            win = WinSearch(self.attrs['relation'], sel_multi=True, ids=ids,
-                    context=context, domain=domain, parent=self._window,
-                    views_preload=self.attrs.get('views', {}))
-            ids = win.run()
 
-        res_id = None
-        if ids:
-            res_id = ids[0]
-        self.screen.load(ids, modified=True)
-        self.screen.display(res_id=res_id)
-        if self.screen.current_view:
-            self.screen.current_view.set_cursor()
-        self.wid_text.set_text('')
+        sequence = None
+        if self.screen.current_view.view_type == 'tree':
+            sequence = self.screen.current_view.widget_tree.sequence
+
+        def callback(result):
+            self.focus_out = True
+            if result:
+                ids = [x[0] for x in result]
+                self.screen.load(ids, modified=True)
+                self.screen.display(res_id=ids[0])
+                if sequence:
+                    self.screen.group.set_sequence(field=sequence)
+            self.screen.set_cursor()
+            self.wid_text.set_text('')
+
+        if len(ids) != 1 or kwargs.get('win_search', False):
+            WinSearch(self.attrs['relation'], callback, sel_multi=True,
+                ids=ids, context=context, domain=domain,
+                view_ids=self.attrs.get('view_ids', '').split(','),
+                views_preload=self.attrs.get('views', {}),
+                new=self.but_new.get_property('sensitive'))
+        else:
+            callback([(i, None) for i in ids])
 
     def _sig_label(self, screen, signal_data):
-        name = '_'
-        if signal_data[0] >= 0:
-            name = str(signal_data[0] + 1)
-        line = '(%s/%s)' % (name, signal_data[1])
+        self._position = signal_data[0]
+        self._length = signal_data[1]
+        if self._position >= 1:
+            name = str(self._position)
+        else:
+            name = '_'
+        line = '(%s/%s)' % (name, self._length)
         self.label.set_text(line)
+        self._set_button_sensitive()
 
-    def display(self, model, model_field):
-        if not model_field:
-            self.screen.current_model = None
+    def display(self, record, field):
+        super(One2Many, self).display(record, field)
+
+        self._set_button_sensitive()
+
+        if field is None:
+            self.screen.new_group()
+            self.screen.current_record = None
+            self.screen.parent = None
             self.screen.display()
             return False
-        super(One2Many, self).display(model, model_field)
-        new_models = model_field.get_client(model)
-        if self.screen.models != new_models:
-            self.screen.models_set(new_models)
+        new_group = field.get_client(record)
+
+        if id(self.screen.group) != id(new_group):
+            self.screen.group = new_group
             if (self.screen.current_view.view_type == 'tree') \
-                    and self.screen.editable_get():
-                self.screen.current_model = None
+                    and self.screen.current_view.editable:
+                self.screen.current_record = None
             readonly = False
             domain = []
-            if self._view.modelfield and self._view.model:
-                modelfield = self._view.modelfield
-                model = self._view.model
-                readonly = modelfield.get_state_attrs(model
-                        ).get('readonly', False)
-                domain = modelfield.domain_get(self._view.model)
+            size_limit = None
+            if record:
+                readonly = field.get_state_attrs(record).get('readonly', False)
+                domain = field.domain_get(record)
+                size_limit = record.expr_eval(self.attrs.get('size'))
             if self.screen.domain != domain:
                 self.screen.domain = domain
-            self.screen.models.readonly = readonly
+            if not self.screen.group.readonly and readonly:
+                self.screen.group.readonly = readonly
+            self.screen.size_limit = size_limit
         self.screen.display()
         return True
 
-    def display_value(self):
-        return '<' + self.attrs.get('string', '') + '>'
-
-    def set_value(self, model, model_field):
+    def set_value(self, record, field):
+        self.screen.save_tree_state()
         self.screen.current_view.set_value()
-        if self.screen.is_modified():
-            model.modified = True
-            model.modified_fields.setdefault(model_field.name)
+        if self.screen.modified():  # TODO check if required
+            record.modified_fields.setdefault(field.name)
+            record.signal('record-modified')
         return True
+
+    def _completion_match_selected(self, completion, model, iter_):
+        record_id, = model.get(iter_, 1)
+        self.screen.load([record_id], modified=True)
+        self.wid_text.set_text('')
+        self.wid_text.grab_focus()
+
+        completion_model = self.wid_completion.get_model()
+        completion_model.clear()
+        completion_model.search_text = self.wid_text.get_text()
+        return True
+
+    def _update_completion(self, widget):
+        if self._readonly:
+            return
+        if not self.record:
+            return
+        model = self.attrs['relation']
+        domain = self.field.domain_get(self.record)
+        domain = [domain, self.record.expr_eval(self.attrs.get('add_remove'))]
+        removed_ids = self.field.get_removed_ids(self.record)
+        domain = ['OR', domain, ('id', 'in', removed_ids)]
+        update_completion(self.wid_text, self.record, self.field, model,
+            domain=domain)
+
+    def _completion_action_activated(self, completion, index):
+        if index == 0:
+            self._sig_add(win_search=True)
+            self.wid_text.grab_focus()
+        elif index == 1:
+            self._sig_new()

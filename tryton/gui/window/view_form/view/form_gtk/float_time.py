@@ -1,26 +1,29 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 import gtk
-import math
-import locale
 from interface import WidgetInterface
+import tryton.common as common
+import tryton.rpc as rpc
 
 
 class FloatTime(WidgetInterface):
 
-    def __init__(self, window, parent, model, attrs=None):
-        super(FloatTime, self).__init__(window, parent, model=model,
-                attrs=attrs)
+    def __init__(self, field_name, model_name, attrs=None):
+        super(FloatTime, self).__init__(field_name, model_name, attrs=attrs)
 
         self.widget = gtk.HBox()
         self.entry = gtk.Entry()
         self.entry.set_alignment(1.0)
         self.entry.set_property('activates_default', True)
 
-        self.entry.connect('populate-popup', self._populate_popup)
         self.entry.connect('activate', self.sig_activate)
-        self.entry.connect('focus-in-event', lambda x, y: self._focus_in())
         self.entry.connect('focus-out-event', lambda x, y: self._focus_out())
+        self.entry.connect('key-press-event', self.send_modified)
         self.widget.pack_start(self.entry)
+
+        self.conv = None
+        if attrs and attrs.get('float_time'):
+            self.conv = rpc.CONTEXT.get(attrs['float_time'])
 
     def _color_widget(self):
         return self.entry
@@ -28,40 +31,31 @@ class FloatTime(WidgetInterface):
     def grab_focus(self):
         return self.entry.grab_focus()
 
-    def text_to_float(self, text):
-        try:
-            if text and ':' in text:
-                # assume <hours>:<minutes>
-                h, m = text.split(':')
-                h = h or 0
-                m = m or 0
-                return round(int(h) + int(m)/60.0, 2)
-            else:
-                # try float in locale notion
-                return locale.atof(text)
-        except:
-            return 0.0
+    @property
+    def modified(self):
+        if self.record and self.field:
+            value = self.entry.get_text()
+            return common.float_time_to_text(self.field.get(self.record),
+                self.conv) != value
+        return False
 
-    def set_value(self, model, model_field):
+    def set_value(self, record, field):
         value = self.entry.get_text()
-        if not value:
-            return model_field.set_client(model, 0.0)
-        return model_field.set_client(model, self.text_to_float(value))
+        digits = field.digits(record)
+        return field.set_client(record,
+            common.text_to_float_time(value, self.conv, digits[1]))
 
-    def display(self, model, model_field):
-        super(FloatTime, self).display(model, model_field)
-        if not model_field:
-            self.entry.set_text('00:00')
-            return False
-        val = model_field.get(model)
-        value = '%02d:%02d' % (math.floor(abs(val)),
-                round(abs(val)%1+0.01, 2) * 60)
-        if val < 0:
-            value = '-' + value
-        self.entry.set_text(value)
-
-    def display_value(self):
+    def get_value(self):
         return self.entry.get_text()
+
+    def display(self, record, field):
+        super(FloatTime, self).display(record, field)
+        if not field:
+            self.entry.set_text('')
+            return False
+        val = field.get(record)
+
+        self.entry.set_text(common.float_time_to_text(val, self.conv))
 
     def _readonly_set(self, value):
         super(FloatTime, self)._readonly_set(value)

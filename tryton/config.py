@@ -1,4 +1,5 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
 "Options"
 import ConfigParser
 import optparse
@@ -8,205 +9,187 @@ from version import VERSION
 import logging
 import sys
 import locale
+import gtk
+
+from tryton.exceptions import TrytonError
 
 _ = gettext.gettext
 
+
 def get_home_dir():
-    """
-    Return the closest possible equivalent to a 'home' directory.
-    For Posix systems, this is $HOME, and on NT it's $HOMEDRIVE\$HOMEPATH.
-    Currently only Posix and NT are implemented, a HomeDirError exception is
-    raised for all other OSes.
-    """
-
-    if os.name == 'posix':
-        return os.path.expanduser('~')
-    elif os.name == 'nt':
-        try:
-            return os.path.join(os.environ['HOMEDRIVE'], os.environ['HOMEPATH'])
-        except:
-            try:
-                import _winreg as wreg
-                key = wreg.OpenKey(wreg.HKEY_CURRENT_USER,
-                        "Software\Microsoft\Windows\Current" \
-                                "Version\Explorer\Shell Folders")
-                homedir = wreg.QueryValueEx(key, 'Personal')[0]
-                key.Close()
-                return homedir
-            except:
-                return 'C:\\'
-    elif os.name == 'dos':
-        return 'C:\\'
-    else:
-        return '.'
-
-def find_path(progs, args):
     if os.name == 'nt':
-        return ''
-    if os.name == 'mac' or \
-            (hasattr(os, 'uname') and os.uname()[0] == 'Darwin'):
-        return ''
-    paths = [x for x in os.environ['PATH'].split(':')
-            if os.path.isdir(x)]
-    for dir in paths:
-        for prog in progs:
-            val = os.path.join(dir, prog)
-            if os.path.isfile(val) or os.path.islink(val):
-                return val + ' ' + args
-    return ''
+        return os.path.join(os.environ['HOMEDRIVE'], os.environ['HOMEPATH'])
+    return os.environ['HOME']
+
+
+def get_config_dir():
+    if os.name == 'nt':
+        return os.path.join(os.environ['APPDATA'], '.config', 'tryton',
+                VERSION.rsplit('.', 1)[0])
+    return os.path.join(os.environ['HOME'], '.config', 'tryton',
+            VERSION.rsplit('.', 1)[0])
+if not os.path.isdir(get_config_dir()):
+    os.makedirs(get_config_dir(), 0700)
 
 
 class ConfigManager(object):
     "Config manager"
 
     def __init__(self):
-        self.options = {
-            'login.login': 'admin',
-            'login.server': 'localhost',
-            'login.port': '8070',
-            'login.db': False,
-            'client.modepda': False,
-            'client.toolbar': 'default',
+        short_version = '.'.join(VERSION.split('.', 2)[:2])
+        demo_server = 'demo%s.tryton.org' % short_version
+        demo_database = 'demo%s' % short_version
+        form_tab = 'left' if os.name != 'nt' else 'top'
+        self.defaults = {
+            'login.profile': demo_server,
+            'login.login': 'demo',
+            'login.server': demo_server,
+            'login.port': '8000',
+            'login.db': demo_database,
+            'login.expanded': False,
             'tip.autostart': False,
             'tip.position': 0,
-            'logging.logger': '',
-            'logging.level': 'ERROR',
-            'client.default_path': get_home_dir(),
             'form.toolbar': True,
-            'client.form_tab': 'left',
-            'client.form_tab_orientation': 90,
-            'client.tree_width': True,
+            'client.default_width': 900,
+            'client.default_height': 750,
+            'client.modepda': False,
+            'client.toolbar': 'default',
+            'client.form_tab': form_tab,
+            'client.maximize': False,
+            'client.save_width_height': True,
+            'client.save_tree_state': True,
             'client.spellcheck': False,
+            'client.default_path': get_home_dir(),
             'client.lang': locale.getdefaultlocale()[0],
             'client.language_direction': 'ltr',
-            'client.actions': {
-                'odt': {0: find_path(['ooffice', 'ooffice2'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2'], '-p "%s"')},
-                'txt': {0: find_path(['ooffice', 'ooffice2'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2'], '-p "%s"')},
-                'pdf': {0: find_path(['evince', 'xpdf', 'gpdf',
-                    'kpdf', 'epdfview', 'acroread'], '"%s"'), 1: ''},
-                'png': {0: find_path(['display', 'qiv', 'eye'], '"%s"'), 1: ''},
-                'csv': {0: find_path(['ooffice', 'ooffice2'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2'], '-p "%s"')},
-                },
             'client.email': '',
+            'client.can_change_accelerators': False,
+            'client.limit': 1000,
             'roundup.url': 'http://bugs.tryton.org/roundup/',
             'roundup.xmlrpc': 'roundup-xmlrpc.tryton.org',
+            'menu.pane': 200,
+            'menu.expanded': True,
         }
-        parser = optparse.OptionParser(version=("Tryton %s" % VERSION))
+        self.config = {}
+        self.options = {
+            'login.host': True
+        }
+        self.arguments = []
+
+    def parse(self):
+        parser = optparse.OptionParser(version=("Tryton %s" % VERSION),
+                usage="Usage: %prog [options] [url]")
         parser.add_option("-c", "--config", dest="config",
                 help=_("specify alternate config file"))
+        parser.add_option("-d", "--dev", action="store_true",
+                default=False, dest="dev",
+                help=_("development mode"))
         parser.add_option("-v", "--verbose", action="store_true",
                 default=False, dest="verbose",
-                help=_("enable basic debugging"))
-        parser.add_option("-d", "--log", dest="log_logger", default='',
-                help=_("specify channels to log"))
+                help=_("logging everything at INFO level"))
         parser.add_option("-l", "--log-level", dest="log_level",
-                default='ERROR', help=_("specify the log level: " \
-                        "INFO, DEBUG, WARNING, ERROR, CRITICAL"))
+                help=_("specify the log level: "
+                "DEBUG, INFO, WARNING, ERROR, CRITICAL"))
         parser.add_option("-u", "--user", dest="login",
                 help=_("specify the login user"))
         parser.add_option("-p", "--port", dest="port",
                 help=_("specify the server port"))
         parser.add_option("-s", "--server", dest="server",
                 help=_("specify the server hostname"))
-        opt = parser.parse_args()[0]
+        opt, self.arguments = parser.parse_args()
 
+        if len(self.arguments) > 1:
+            raise TrytonError(_('Too much arguments'))
 
-        self.rcfile = opt.config or os.path.join(get_home_dir(), '.tryton')
+        if opt.config and not os.path.isfile(opt.config):
+            raise TrytonError(_('File "%s" not found') % (opt.config,))
+        self.rcfile = opt.config or os.path.join(
+            get_config_dir(), 'tryton.conf')
         self.load()
 
-        self.options['logging.logger'] = opt.log_logger
-        if opt.verbose and opt.log_level == 'ERROR':
-            self.options['logging.level'] = 'INFO'
-        else:
-            self.options['logging.level'] = opt.log_level
+        self.options['dev'] = opt.dev
+        logging.basicConfig()
+        loglevels = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL,
+            }
+        if not opt.log_level:
+            if opt.verbose:
+                opt.log_level = 'INFO'
+            else:
+                opt.log_level = 'ERROR'
+        logging.getLogger().setLevel(loglevels[opt.log_level.upper()])
 
         for arg in ('login', 'port', 'server'):
             if getattr(opt, arg):
-                self.options['login.'+arg] = getattr(opt, arg)
+                self.options['login.' + arg] = getattr(opt, arg)
 
     def save(self):
         try:
             configparser = ConfigParser.ConfigParser()
-            for option in self.options.keys():
-                if not len(option.split('.')) == 2:
+            for entry in self.config.keys():
+                if not len(entry.split('.')) == 2:
                     continue
-                section, name = option.split('.')
-                if section in ('logging'):
-                    continue
+                section, name = entry.split('.')
                 if not configparser.has_section(section):
                     configparser.add_section(section)
-                configparser.set(section, name, self.options[option])
-            configparser.write(file(self.rcfile, 'wb'))
-        except:
-            logging.getLogger('common.options').warn(
-                    _('Unable to write config file %s!') % \
-                            (self.rcfile,))
+                configparser.set(section, name, self.config[entry])
+            configparser.write(open(self.rcfile, 'wb'))
+        except IOError:
+            logging.getLogger(__name__).warn(
+                _('Unable to write config file %s!')
+                % (self.rcfile,))
             return False
         return True
 
     def load(self):
-        try:
-            if not os.path.isfile(self.rcfile):
-                return False
-
-            configparser = ConfigParser.ConfigParser()
-            configparser.read([self.rcfile])
-            for section in configparser.sections():
-                for (name, value) in configparser.items(section):
-                    if value.lower() == 'true':
-                        value = True
-                    elif value.lower() == 'false':
-                        value = False
-                    if section == 'client' and name == 'actions':
-                        value = eval(value)
-                    self.options[section + '.' + name] = value
-        except:
-            logging.getLogger('options').warn(
-                    _('Unable to read config file %s!') % \
-                            (self.rcfile,))
-            return False
+        configparser = ConfigParser.ConfigParser()
+        configparser.read([self.rcfile])
+        for section in configparser.sections():
+            for (name, value) in configparser.items(section):
+                if value.lower() == 'true':
+                    value = True
+                elif value.lower() == 'false':
+                    value = False
+                if section == 'client' and name == 'limit':
+                    # First convert to float to be backward compatible with old
+                    # configuration
+                    value = int(float(value))
+                self.config[section + '.' + name] = value
         return True
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key, value, config=True):
         self.options[key] = value
+        if config:
+            self.config[key] = value
 
     def __getitem__(self, key):
-        return self.options[key]
+        return self.options.get(key, self.config.get(key,
+            self.defaults.get(key)))
 
 CONFIG = ConfigManager()
-CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..')))
-PREFIX = os.path.abspath(os.path.normpath(os.path.join(
-    os.path.dirname(sys.argv[0]), '..')))
+if (os.name == 'nt' and hasattr(sys, 'frozen')
+        and os.path.basename(sys.executable) == 'tryton.exe'):
+    CURRENT_DIR = os.path.dirname(unicode(sys.executable,
+        sys.getfilesystemencoding()))
+else:
+    CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
+        unicode(os.path.dirname(__file__), sys.getfilesystemencoding()),
+        '..')))
 PIXMAPS_DIR = os.path.join(CURRENT_DIR, 'share', 'pixmaps', 'tryton')
 if not os.path.isdir(PIXMAPS_DIR):
-    PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
-    if not os.path.isdir(PIXMAPS_DIR):
-        PREFIX = os.path.abspath(os.path.normpath(
-            os.path.dirname(sys.argv[0])))
-        PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
-
-if os.name == 'nt':
-    sys.path.insert(0, os.path.join(CURRENT_DIR, 'GTK\\bin'))
-    sys.path.insert(0, os.path.join(CURRENT_DIR, 'GTK\\lib'))
-    sys.path.insert(0, os.path.join(CURRENT_DIR))
-    os.environ['PATH'] = os.path.join(CURRENT_DIR, 'GTK\\lib') + ";" + \
-            os.environ['PATH']
-    os.environ['PATH'] = os.path.join(CURRENT_DIR, 'GTK\\bin') + ";" + \
-            os.environ['PATH']
-    os.environ['PATH'] = os.path.join(CURRENT_DIR) + ";" + os.environ['PATH']
-
-import gtk
+    PIXMAPS_DIR = os.path.join(sys.prefix, 'share', 'pixmaps', 'tryton')
 
 TRYTON_ICON = gtk.gdk.pixbuf_new_from_file(
-        os.path.join(PIXMAPS_DIR, '..', 'tryton-icon.png').encode('utf-8'))
+        os.path.join(PIXMAPS_DIR, 'tryton-icon.png').encode('utf-8'))
+
 
 def _data_dir():
     data_dir = os.path.join(CURRENT_DIR, 'share', 'tryton')
     if not os.path.isdir(data_dir):
-        data_dir = os.path.join(PREFIX, 'share', 'tryton')
+        data_dir = os.path.join(sys.prefix, 'share', 'tryton')
     return data_dir
 DATA_DIR = _data_dir()

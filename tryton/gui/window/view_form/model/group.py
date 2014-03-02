@@ -1,400 +1,434 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
-from tryton.rpc import RPCProxy
-import tryton.rpc as rpc
-from record import ModelRecord
-import field
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
+from weakref import WeakSet
+
+from record import Record
+from field import Field, O2MField
 from tryton.signal_event import SignalEvent
-import tryton.common as common
+from tryton.common.domain_inversion import is_leaf
+from tryton.common import RPCExecute, RPCException, MODELACCESS
 
 
-class ModelList(list):
-    def __init__(self, screen):
-        super(ModelList, self).__init__()
+class Group(SignalEvent, list):
+
+    def __init__(self, model_name, fields, ids=None, parent=None,
+            parent_name='', child_name='', context=None, domain=None,
+            readonly=False, parent_datetime_field=None):
+        super(Group, self).__init__()
+        if domain is None:
+            domain = []
+        self.__domain = domain
+        self.__domain4inversion = None
         self.lock_signal = False
-        self.__screen = screen
-
-    def insert(self, pos, obj):
-        if pos >= 1:
-            self.__getitem__(pos - 1).next[id(self)] = obj
-        if pos < self.__len__():
-            obj.next[id(self)] = self.__getitem__(pos)
-        else:
-            obj.next[id(self)] = None
-        super(ModelList, self).insert(pos, obj)
-        if not self.lock_signal:
-            self.__screen.signal('record-changed', ('record-added', pos))
-
-    def append(self, obj):
-        if self.__len__() >= 1:
-            self.__getitem__(self.__len__() - 1).next[id(self)] = obj
-        obj.next[id(self)] = None
-        super(ModelList, self).append(obj)
-        if not self.lock_signal:
-            self.__screen.signal('record-changed', ('record-added', -1))
-
-    def remove(self, obj):
-        idx = self.index(obj)
-        if idx >= 1:
-            if idx + 1 < self.__len__():
-                self.__getitem__(idx - 1).next[id(self)] = self.__getitem__(idx + 1)
-            else:
-                self.__getitem__(idx - 1).next[id(self)] = None
-        super(ModelList, self).remove(obj)
-        if not self.lock_signal:
-            self.__screen.signal('record-changed', ('record-removed', idx))
-
-    def clear(self):
-        while self:
-            self.pop()
-            if not self.lock_signal:
-                self.__screen.signal('record-changed',
-                        ('record-removed', len(self)))
-
-    def move(self, obj, pos):
-        self.lock_signal = True
-        if self.__len__() > pos:
-            idx = self.index(obj)
-            self.remove(obj)
-            if pos > idx:
-                pos -= 1
-            self.insert(pos, obj)
-        else:
-            self.remove(obj)
-            self.append(obj)
-        self.lock_signal = False
-
-    def __setitem__(self, key, value):
-        super(ModelList, self).__setitem__(key, value)
-        if not self.lock_signal:
-            self.__screen.signal('record-changed', ('record-changed', key))
-
-
-class ModelRecordGroup(SignalEvent):
-
-    def __init__(self, resource, fields, window, ids=None, parent=None,
-            parent_name='', context=None, readonly=False):
-        super(ModelRecordGroup, self).__init__()
-        self.window = window
         self.parent = parent
         self.parent_name = parent_name or ''
+        self.children = []
+        self.child_name = child_name
+        self.parent_datetime_field = parent_datetime_field
         self._context = context or {}
-        self.resource = resource
-        self.rpc = RPCProxy(resource)
-        self.fields = fields
-        self.mfields = {}
-        ModelRecordGroup.mfields_load(fields.keys(), self)
-        self.models = ModelList(self)
+        self.model_name = model_name
+        self.fields = {}
+        self.load_fields(fields)
         self.current_idx = None
         self.load(ids)
-        self.model_removed = []
-        self.model_deleted = []
+        self.record_deleted, self.record_removed = [], []
         self.on_write = set()
-        self.readonly = readonly
-        if self._context.get('_datetime'):
-            self.readonly = True
+        self.__readonly = readonly
+        self.__id2record = {}
+        self.__field_childs = None
+        self.exclude_field = None
+        self.pool = WeakSet()
+        self.skip_model_access = False
+
+        if self.parent and self.parent.model_name == model_name:
+            self.parent.group.children.append(self)
+
+    @property
+    def readonly(self):
+        # Must skip res.user for Preference windows
+        if (self._context.get('_datetime')
+                or (not MODELACCESS[self.model_name]['write']
+                    and not self.skip_model_access)):
+            return True
+        return self.__readonly
+
+    @readonly.setter
+    def readonly(self, value):
+        self.__readonly = value
+
+    @property
+    def domain(self):
+        if self.parent and self.child_name:
+            field = self.parent.group.fields[self.child_name]
+            return [self.__domain, field.domain_get(self.parent)]
+        return self.__domain
+
+    def clean4inversion(self, domain):
+        "This method will replace non relevant fields for domain inversion"
+        if domain in ([], ()):
+            return []
+        head, tail = domain[0], domain[1:]
+        if head in ('AND', 'OR'):
+            pass
+        elif is_leaf(head):
+            field = head[0]
+            if (field in self.fields
+                    and self.fields[field].attrs.get('readonly')):
+                head = []
+        else:
+            head = self.clean4inversion(head)
+        return [head] + self.clean4inversion(tail)
+
+    def __get_domain4inversion(self):
+        if self.__domain4inversion is None:
+            self.__domain4inversion = self.clean4inversion(self.domain)
+        return self.__domain4inversion
+
+    domain4inversion = property(__get_domain4inversion)
+
+    def insert(self, pos, record):
+        assert record.group is self
+        if pos >= 1:
+            self.__getitem__(pos - 1).next[id(self)] = record
+        if pos < self.__len__():
+            record.next[id(self)] = self.__getitem__(pos)
+        else:
+            record.next[id(self)] = None
+        super(Group, self).insert(pos, record)
+        self.__id2record[record.id] = record
+        if not self.lock_signal:
+            self.signal('group-list-changed', ('record-added', record))
+
+    def append(self, record):
+        assert record.group is self
+        if self.__len__() >= 1:
+            self.__getitem__(self.__len__() - 1).next[id(self)] = record
+        record.next[id(self)] = None
+        super(Group, self).append(record)
+        self.__id2record[record.id] = record
+        if not self.lock_signal:
+            self.signal('group-list-changed', ('record-added', record))
+
+    def _remove(self, record):
+        idx = self.index(record)
+        if idx >= 1:
+            if idx + 1 < self.__len__():
+                self.__getitem__(idx - 1).next[id(self)] = \
+                    self.__getitem__(idx + 1)
+            else:
+                self.__getitem__(idx - 1).next[id(self)] = None
+        self.signal('group-list-changed', ('record-removed', record))
+        super(Group, self).remove(record)
+        del self.__id2record[record.id]
+
+    def clear(self):
+        for record in self[:]:
+            self.signal('group-list-changed', ('record-removed', record))
+            record.destroy()
+            self.pop(0)
+        self.__id2record = {}
+        self.record_removed, self.record_deleted = [], []
+
+    def move(self, record, pos):
+        if self.__len__() > pos >= 0:
+            idx = self.index(record)
+            self._remove(record)
+            if pos > idx:
+                pos -= 1
+            self.insert(pos, record)
+        else:
+            self._remove(record)
+            self.append(record)
+
+    def __setitem__(self, i, value):
+        super(Group, self).__setitem__(i, value)
+        if not self.lock_signal:
+            self.signal('group-list-changed', ('record-changed', i))
 
     def __repr__(self):
-        return '<ModelRecordGroup %s>' % (self.resource,)
+        return '<Group %s at %s>' % (self.model_name, id(self))
 
-    @staticmethod
-    def mfields_load(fkeys, models):
-        for fname in fkeys:
-            fvalue = models.fields[fname]
-            modelfield = field.ModelField(fvalue['type'])
-            fvalue['name'] = fname
-            models.mfields[fname] = modelfield(models, fvalue)
-            if isinstance(models.mfields[fname], field.O2MField) \
-                    and '_datetime' in models._context:
-                models.mfields[fname].context.update({
-                    '_datetime': models._context['_datetime'],
+    def load_fields(self, fields):
+        for name, attr in fields.iteritems():
+            field = Field(attr['type'])
+            attr['name'] = name
+            self.fields[name] = field(attr)
+            if isinstance(self.fields[name], O2MField) \
+                    and '_datetime' in self._context:
+                self.fields[name].context.update({
+                    '_datetime': self._context['_datetime'],
                     })
 
     def save(self):
-        for model in self.models:
-            saved = model.save()
-            self.writen(saved)
+        saved = []
+        for record in self:
+            saved.append(record.save(force_reload=False))
+        if self.record_deleted:
+            self.delete(self.record_deleted)
+        return saved
 
-    def writen(self, ids):
+    def delete(self, records):
+        return Record.delete(records)
+
+    @property
+    def root_group(self):
+        root = self
+        parent = self.parent
+        while parent:
+            root = parent.group
+            parent = parent.parent
+        return root
+
+    def written(self, ids):
         if isinstance(ids, (int, long)):
             ids = [ids]
         ids = [x for x in self.on_write_ids(ids) or [] if x not in ids]
         if not ids:
             return
-        self.reload(ids)
+        self.root_group.reload(ids)
         return ids
 
     def reload(self, ids):
-        models = []
-        for obj_id in ids:
-            for model in self.models:
-                if model.id == obj_id and not model.modified:
-                    models.append(model)
-        for model in models:
-            model._loaded = False
+        for child in self.children:
+            child.reload(ids)
+        for id_ in ids:
+            record = self.get(id_)
+            if record and not record.modified:
+                record._loaded.clear()
 
     def on_write_ids(self, ids):
         if not self.on_write:
-            return False
+            return []
         res = []
         for fnct in self.on_write:
             try:
-                res += getattr(self.rpc, fnct)(ids, self.context)
-            except Exception, exception:
-                common.process_exception(exception, self.window)
-                return False
+                res += RPCExecute('model', self.model_name, fnct, ids,
+                    main_iteration=False, context=self.context)
+            except RPCException:
+                return []
         return list({}.fromkeys(res))
 
-    def _load_for(self, values):
-        if len(values)>10:
-            self.models.lock_signal = True
-        for value in values:
-            for model in self.models:
-                if model.id == value['id']:
-                    model.set(value)
-        if len(values)>10:
-            self.models.lock_signal = False
-            self.signal('record-cleared')
-
-    def load(self, ids, display=True, modified=False):
+    def load(self, ids, modified=False):
         if not ids:
             return True
 
-        old_ids = [x.id for x in self.models]
-        ids = [x for x in ids if x not in old_ids]
-        if not ids:
-            return True
+        if len(ids) > 1:
+            self.lock_signal = True
 
-        if len(ids) > 10:
-            self.models.lock_signal = True
-        newmod = None
-        newmods = []
+        new_records = []
         for id in ids:
-            newmod = ModelRecord(self.resource, id, self.window,
-                    parent=self.parent, parent_name=self.parent_name, group=self)
-            self.models.append(newmod)
-            newmods.append(newmod)
-            newmod.signal_connect(self, 'record-changed', self._record_changed)
-            newmod.signal_connect(self, 'record-modified', self._record_modified)
-            for model in list(self.model_removed):
-                if model.id == id:
-                    self.model_removed.remove(model)
-            for model in list(self.model_deleted):
-                if model.id == id:
-                    self.model_deleted.remove(model)
-        if len(ids) > 10:
-            self.models.lock_signal = False
-            self.signal('record-cleared')
+            new_record = self.get(id)
+            if not new_record:
+                new_record = Record(self.model_name, id, group=self)
+                self.append(new_record)
+                new_record.signal_connect(self, 'record-changed',
+                    self._record_changed)
+                new_record.signal_connect(self, 'record-modified',
+                    self._record_modified)
+            new_records.append(new_record)
 
-        ctx = rpc.CONTEXT.copy()
-        ctx.update(self.context)
-        if self.fields:
-            try:
-                values = self.rpc.read(ids[:80], self.fields.keys() + \
-                        [x + '.rec_name' for x in self.fields
-                            if self.fields[x]['type'] in \
-                                    ('many2one', 'reference')] + \
-                        ['_timestamp'], ctx)
-            except Exception, exception:
-                common.process_exception(exception, self.window)
-                return False
-            if not values:
-                return False
-            self._load_for(values)
+        # Remove previously removed or deleted records
+        for record in self.record_removed[:]:
+            if record.id in ids:
+                self.record_removed.remove(record)
+        for record in self.record_deleted[:]:
+            if record.id in ids:
+                self.record_deleted.remove(record)
 
-        if newmod and display:
-            self.signal('model-changed', newmod)
+        if self.lock_signal:
+            self.lock_signal = False
+            self.signal('group-cleared')
 
-        if modified and newmods:
-            for newmod in newmods:
-                newmod.modified = True
-            # send record-changed only once
-            if newmod.parent:
-                newmod.signal('record-changed', newmod.parent)
+        if new_records and modified:
+            new_records[0].signal('record-modified')
+            new_records[0].signal('record-changed')
 
         self.current_idx = 0
         return True
 
-    def clear(self):
-        self.models.clear()
-        self.model_removed = []
-        self.model_deleted = []
-
     def _get_context(self):
-        ctx = rpc.CONTEXT.copy()
+        ctx = self._context.copy()
+        if self.parent:
+            ctx.update(self.parent.context_get())
+            if self.child_name in self.parent.group.fields:
+                field = self.parent.group.fields[self.child_name]
+                ctx.update(field.context_get(self.parent))
         ctx.update(self._context)
+        if self.parent_datetime_field:
+            ctx['_datetime'] = self.parent.get_eval(
+                )[self.parent_datetime_field]
         return ctx
+
     context = property(_get_context)
 
-    def model_add(self, model, position=-1, modified=True):
-        #TODO To be checked
-        if not model.mgroup is self:
-            fields = {}
-            for i in model.mgroup.fields:
-                fields[model.mgroup.fields[i]['name']] = \
-                        model.mgroup.fields[i]
-            self.add_fields(fields, self)
-            self.add_fields(self.fields, model.mgroup)
-            model.mgroup = self
-
+    def add(self, record, position=-1):
+        if record.group is not self:
+            record.signal_unconnect(record.group)
+            record.group = self
+            record.signal_connect(self, 'record-changed', self._record_changed)
+            record.signal_connect(self, 'record-modified',
+                self._record_modified)
         if position == -1:
-            self.models.append(model)
+            self.append(record)
         else:
-            self.models.insert(position, model)
+            self.insert(position, record)
+        for record_rm in self.record_removed:
+            if record_rm.id == record.id:
+                self.record_removed.remove(record)
+        for record_del in self.record_deleted:
+            if record_del.id == record.id:
+                self.record_deleted.remove(record)
         self.current_idx = position
-        model.parent = self.parent
-        model.parent_name = self.parent_name
-        model.window = self.window
-        if modified:
-            model.modified = True
-        model.signal_connect(self, 'record-changed', self._record_changed)
-        model.signal_connect(self, 'record-modified', self._record_modified)
-        return model
-
-    def model_move(self, model, position=0):
-        self.models.move(model, position)
+        record.modified_fields.setdefault('id')
+        record.signal('record-modified')
+        self.signal('group-changed', record)
+        return record
 
     def set_sequence(self, field='sequence'):
         index = 0
-        for model in self.models:
-            if model[field]:
-                if index >= model[field].get(model):
+        changed = False
+        for record in self:
+            if record[field]:
+                if index >= record[field].get(record):
                     index += 1
-                    model[field].set(model, index, modified=True)
+                    record.signal_unconnect(self, 'record-changed')
+                    try:
+                        record[field].set_client(record, index)
+                    finally:
+                        record.signal_connect(self, 'record-changed',
+                            self._record_changed)
+                    changed = record
                 else:
-                    index = model[field].get(model)
+                    index = record[field].get(record)
+        if changed:
+            self.signal('group-changed', changed)
 
-    def model_new(self, default=True, domain=None, context=None):
-        newmod = ModelRecord(self.resource, None, self.window, group=self,
-                parent=self.parent, parent_name=self.parent_name, new=True)
-        newmod.signal_connect(self, 'record-changed', self._record_changed)
-        newmod.signal_connect(self, 'record-modified', self._record_modified)
+    def new(self, default=True, obj_id=None):
+        record = Record(self.model_name, obj_id, group=self)
         if default:
-            ctx = {}
-            ctx.update(context or {})
-            ctx.update(self.context)
-            newmod.default_get(domain, ctx)
-        self.signal('model-changed', newmod)
-        return newmod
+            record.default_get()
+        record.signal_connect(self, 'record-changed', self._record_changed)
+        record.signal_connect(self, 'record-modified', self._record_modified)
+        return record
 
-    def model_remove(self, model):
-        idx = self.models.index(model)
-        self.models.remove(model)
-        if model.parent:
-            model.parent.modified = True
-        if self.models:
-            self.current_idx = min(idx, len(self.models)-1)
+    def unremove(self, record, signal=True):
+        if record in self.record_removed:
+            self.record_removed.remove(record)
+        if record in self.record_deleted:
+            self.record_deleted.remove(record)
+        if signal:
+            record.signal('record-changed', record.parent)
+
+    def remove(self, record, remove=False, modified=True, signal=True,
+            force_remove=False):
+        idx = self.index(record)
+        if self[idx].id >= 0:
+            if remove:
+                if self[idx] in self.record_deleted:
+                    self.record_deleted.remove(self[idx])
+                self.record_removed.append(self[idx])
+            else:
+                if self[idx] in self.record_removed:
+                    self.record_removed.remove(self[idx])
+                self.record_deleted.append(self[idx])
+        if record.parent:
+            record.parent.modified_fields.setdefault('id')
+            record.parent.signal('record-modified')
+        if modified:
+            record.modified_fields.setdefault('id')
+            record.signal('record-modified')
+        if not record.parent or self[idx].id < 0 or force_remove:
+            self._remove(self[idx])
+
+        if len(self):
+            self.current_idx = min(idx, len(self) - 1)
         else:
             self.current_idx = None
 
-    def _record_changed(self, model, signal_data):
-        self.signal('model-changed', model)
+        if signal:
+            record.signal('record-changed', record.parent)
 
-    def _record_modified(self, model, signal_data):
-        self.signal('record-modified', model)
+    def _record_changed(self, record, signal_data):
+        self.signal('group-changed', record)
+
+    def _record_modified(self, record, signal_data):
+        self.signal('record-modified', record)
 
     def prev(self):
-        if self.models and self.current_idx is not None:
-            self.current_idx = (self.current_idx - 1) % len(self.models)
-        elif self.models:
+        if len(self) and self.current_idx is not None:
+            self.current_idx = (self.current_idx - 1) % len(self)
+        elif len(self):
             self.current_idx = 0
         else:
             return None
-        return self.models[self.current_idx]
+        return self[self.current_idx]
 
     def next(self):
-        if self.models and self.current_idx is not None:
-            self.current_idx = (self.current_idx + 1) % len(self.models)
-        elif self.models:
+        if len(self) and self.current_idx is not None:
+            self.current_idx = (self.current_idx + 1) % len(self)
+        elif len(self):
             self.current_idx = 0
         else:
             return None
-        return self.models[self.current_idx]
+        return self[self.current_idx]
 
-    def remove(self, model, remove=False, modified=True, signal=True):
-        idx = self.models.index(model)
-        if self.models[idx].id > 0:
-            if remove:
-                self.model_removed.append(self.models[idx])
+    def add_fields(self, fields, signal=True):
+        to_add = {}
+        for name, attr in fields.iteritems():
+            if name not in self.fields:
+                to_add[name] = attr
             else:
-                self.model_deleted.append(self.models[idx])
-        if model.parent:
-            model.parent.modified = True
-        if modified:
-            model.modified = True
-        self.models.remove(self.models[idx])
-        if signal:
-            model.signal('record-changed', model.parent)
+                self.fields[name].attrs.update(attr)
+        self.load_fields(to_add)
 
-    def add_fields_custom(self, fields, models):
-        to_add = []
-        for field_add in fields.keys():
-            if not field_add in models.fields:
-                models.fields[field_add] = fields[field_add]
-                models.fields[field_add]['name'] = field_add
-                to_add.append(field_add)
-            else:
-                models.fields[field_add].update(fields[field_add])
-        ModelRecordGroup.mfields_load(to_add, models)
-        for fname in to_add:
-            for model in models.models:
-                model.value[fname] = self.mfields[fname].create(model)
-        return to_add
-
-    def add_fields(self, fields, models, context=None, signal=True):
-        if context is None:
-            context = {}
-        to_add = self.add_fields_custom(fields, models)
-        models = models.models
-        if not len(models):
+        if not len(self):
             return True
 
-        old = []
         new = []
-        for model in models:
-            if model.id > 0:
-                if model.is_modified():
-                    old.append(model.id)
-                elif to_add:
-                    model._loaded = False
-            else:
-                new.append(model)
-        ctx = context.copy()
-        if len(old) and len(to_add):
-            ctx.update(rpc.CONTEXT)
-            ctx.update(self.context)
-            try:
-                values = self.rpc.read(old, to_add + \
-                        [x + '.rec_name' for x in to_add
-                            if self.fields[x]['type'] \
-                                    in ('many2one', 'reference')], ctx)
-            except Exception, exception:
-                common.process_exception(exception, self.window)
-                return False
-            if values:
-                for value in values:
-                    value_id = value['id']
-                    if 'id' not in to_add:
-                        del value['id']
-                    self[value_id].set(value, signal=False)
+        for record in self:
+            if record.id < 0:
+                new.append(record)
+
         if len(new) and len(to_add):
-            ctx.update(self.context)
             try:
-                values = self.rpc.default_get(to_add, ctx)
-            except Exception, exception:
-                common.process_exception(exception, self.window)
+                values = RPCExecute('model', self.model_name, 'default_get',
+                    to_add.keys(), main_iteration=False, context=self.context)
+            except RPCException:
                 return False
-            for field_to_add in to_add:
-                if field_to_add not in values:
-                    values[field_to_add] = False
-            for mod in new:
-                mod.set_default(values, signal=signal)
+            for record in new:
+                record.set_default(values, signal=signal)
 
-    def __iter__(self):
-        return iter(self.models)
+    def get(self, id):
+        'Return record with the id'
+        return self.__id2record.get(id)
 
-    def get_by_id(self, m_id):
-        for model in self.models:
-            if model.id == m_id:
-                return model
+    def id_changed(self, old_id):
+        'Update index for old id'
+        record = self.__id2record[old_id]
+        self.__id2record[record.id] = record
+        del self.__id2record[old_id]
 
-    __getitem__ = get_by_id
+    def destroy(self):
+        if self.parent:
+            try:
+                self.parent.group.children.remove(self)
+            except ValueError:
+                pass
+        self.clear()
+        super(Group, self).destroy()
+
+    def get_by_path(self, path):
+        'return record by path'
+        group = self
+        record = None
+        for child_name, id_ in path:
+            record = group.get(id_)
+            if not record:
+                return None
+            if not child_name:
+                continue
+            record[child_name]
+            group = record.value.get(child_name)
+            if not isinstance(group, Group):
+                return None
+        return record

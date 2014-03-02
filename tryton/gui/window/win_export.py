@@ -4,30 +4,28 @@ import gtk
 import gobject
 import gettext
 import tryton.common as common
-import tryton.rpc as rpc
 import types
 from tryton.config import TRYTON_ICON
 import csv
 import tempfile
 import os
+from tryton.common import RPCExecute, RPCException
+from tryton.gui.window.nomodal import NoModal
 
 _ = gettext.gettext
 
 
-
-class WinExport(object):
+class WinExport(NoModal):
     "Window export"
 
-    def __init__(self, model, ids, fields, preload=None, parent=None,
-            context=None):
-        if preload is None:
-            preload = []
-        self.dialog = gtk.Dialog(
-                title= _("Export to CSV"),
-                parent=parent,
-                flags=gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT
-                | gtk.WIN_POS_CENTER_ON_PARENT)
+    def __init__(self, model, ids, context=None):
+        super(WinExport, self).__init__()
+
+        self.dialog = gtk.Dialog(title=_("Export to CSV"), parent=self.parent,
+            flags=gtk.DIALOG_DESTROY_WITH_PARENT)
+        self.dialog.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.dialog.set_icon(TRYTON_ICON)
+        self.dialog.connect('response', self.response)
 
         vbox = gtk.VBox()
         frame_predef_exports = gtk.Frame()
@@ -69,7 +67,7 @@ class WinExport(object):
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-list-add', gtk.ICON_SIZE_BUTTON)
         button_select.set_image(img_button)
-        button_select.connect_after('clicked',  self.sig_sel)
+        button_select.connect_after('clicked', self.sig_sel)
         vbox_buttons.pack_start(button_select, False, False, 0)
 
         button_unselect = gtk.Button(_("_Remove"), stock=None,
@@ -78,7 +76,7 @@ class WinExport(object):
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-list-remove', gtk.ICON_SIZE_BUTTON)
         button_unselect.set_image(img_button)
-        button_unselect.connect_after('clicked',  self.sig_unsel)
+        button_unselect.connect_after('clicked', self.sig_unsel)
         vbox_buttons.pack_start(button_unselect, False, False, 0)
 
         button_unselect_all = gtk.Button(_("Clear"), stock=None,
@@ -87,7 +85,7 @@ class WinExport(object):
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-clear', gtk.ICON_SIZE_BUTTON)
         button_unselect_all.set_image(img_button)
-        button_unselect_all.connect_after('clicked',  self.sig_unsel_all)
+        button_unselect_all.connect_after('clicked', self.sig_unsel_all)
         vbox_buttons.pack_start(button_unselect_all, False, False, 0)
 
         hseparator_buttons = gtk.HSeparator()
@@ -99,7 +97,7 @@ class WinExport(object):
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-save', gtk.ICON_SIZE_BUTTON)
         button_save_export.set_image(img_button)
-        button_save_export.connect_after('clicked',  self.add_predef)
+        button_save_export.connect_after('clicked', self.add_predef)
         vbox_buttons.pack_start(button_save_export, False, False, 0)
 
         button_del_export = gtk.Button(_("Delete Export"), stock=None,
@@ -108,7 +106,7 @@ class WinExport(object):
         img_button = gtk.Image()
         img_button.set_from_stock('tryton-delete', gtk.ICON_SIZE_BUTTON)
         button_del_export.set_image(img_button)
-        button_del_export.connect_after('clicked',  self.remove_predef)
+        button_del_export.connect_after('clicked', self.remove_predef)
         vbox_buttons.pack_start(button_del_export, False, False, 0)
 
         frame_export = gtk.Frame()
@@ -158,17 +156,15 @@ class WinExport(object):
         button_ok.set_flags(gtk.CAN_DEFAULT)
 
         self.dialog.vbox.pack_start(vbox)
-        self.dialog.show_all()
 
         self.ids = ids
         self.model = model
         self.fields_data = {}
         self.context = context
 
-        self.parent = parent
-
         self.view1 = gtk.TreeView()
         self.view1.get_selection().set_mode(gtk.SELECTION_MULTIPLE)
+        self.view1.connect('row-expanded', self.on_row_expanded)
         scrolledwindow_all_fields.add(self.view1)
         self.view2 = gtk.TreeView()
         self.view2.get_selection().set_mode(gtk.SELECTION_MULTIPLE)
@@ -177,54 +173,24 @@ class WinExport(object):
         self.view2.set_headers_visible(False)
 
         cell = gtk.CellRendererText()
-        column = gtk.TreeViewColumn('Field name', cell, text=0)
+        column = gtk.TreeViewColumn('Field name', cell, text=0,
+                background=2)
         self.view1.append_column(column)
 
         cell = gtk.CellRendererText()
         column = gtk.TreeViewColumn('Field name', cell, text=0)
         self.view2.append_column(column)
 
-        self.model1 = gtk.TreeStore(gobject.TYPE_STRING, gobject.TYPE_STRING)
+        self.model1 = gtk.TreeStore(gobject.TYPE_STRING, gobject.TYPE_STRING,
+                gobject.TYPE_STRING)
         self.model2 = gtk.ListStore(gobject.TYPE_STRING, gobject.TYPE_STRING)
-
-        for i in preload:
-            self.model2.set(self.model2.append(), 0, i[1], 1, i[0])
 
         self.fields = {}
 
-        def model_populate(fields, prefix_node='', prefix=None,
-                prefix_value='', level=2):
-            fields_order = fields.keys()
-            fields_order.sort(lambda x, y: -cmp(fields[x].get('string', ''),
-                fields[y].get('string', '')))
-            for field in fields_order:
-                self.fields_data[prefix_node+field] = fields[field]
-                if prefix_node:
-                    self.fields_data[prefix_node + field]['string'] = \
-                            '%s%s' % (prefix_value,
-                                    self.fields_data[prefix_node + \
-                                            field]['string'])
-                st_name = fields[field]['string'] or field
-                node = self.model1.insert(prefix, 0,
-                        [st_name, prefix_node+field])
-                self.fields[prefix_node+field] = (st_name,
-                        fields[field].get('relation', False))
-                if fields[field].get('relation', False) and level>0:
-                    try:
-                        fields2 = rpc.execute('model',
-                                fields[field]['relation'], 'fields_get', None,
-                                rpc.CONTEXT)
-                    except Exception, exception:
-                        common.process_exception(exception, self.parent)
-                        continue
-                    model_populate(fields2, prefix_node+field+'/', node,
-                            st_name+'/', level-1)
-        model_populate(fields)
+        self.model_populate(self._get_fields(model))
 
         self.view1.set_model(self.model1)
         self.view2.set_model(self.model2)
-        self.view1.show_all()
-        self.view2.show_all()
 
         self.wid_action = combo_saveas
         self.wid_write_field_names = checkbox_add_field_names
@@ -232,29 +198,63 @@ class WinExport(object):
 
         # Creating the predefined export view
         self.pref_export = gtk.TreeView()
-        self.pref_export.append_column(gtk.TreeViewColumn(_('Export name'),
+        self.pref_export.append_column(gtk.TreeViewColumn(_('Name'),
             gtk.CellRendererText(), text=2))
-        self.pref_export.append_column(gtk.TreeViewColumn(_('Exported fields'),
-            gtk.CellRendererText(), text=3))
         scrolledwindow_exports.add(self.pref_export)
 
         self.pref_export.connect("row-activated", self.sel_predef)
 
-        # Fill the predefined export tree view and show everything
+        # Fill the predefined export tree view
         self.predef_model = gtk.ListStore(
                 gobject.TYPE_INT,
                 gobject.TYPE_PYOBJECT,
-                gobject.TYPE_STRING,
                 gobject.TYPE_STRING)
         self.fill_predefwin()
-        self.pref_export.show_all()
 
-    def sig_sel_all(self, widget=None):
-        self.model2.clear()
-        for field, relation in self.fields.keys():
-            if not relation:
-                self.model2.set(self.model2.append(), 0, self.fields[field],
-                        1, field)
+        sensible_allocation = self.sensible_widget.get_allocation()
+        self.dialog.set_default_size(int(sensible_allocation.width * 0.9),
+            int(sensible_allocation.height * 0.9))
+        self.dialog.show_all()
+        common.center_window(self.dialog, self.parent, self.sensible_widget)
+
+        self.register()
+
+    def model_populate(self, fields, parent_node=None, prefix_field='',
+            prefix_name=''):
+        fields_order = fields.keys()
+        fields_order.sort(lambda x, y: -cmp(fields[x].get('string', ''),
+            fields[y].get('string', '')))
+        for field in fields_order:
+            self.fields_data[prefix_field + field] = fields[field]
+            name = fields[field]['string'] or field
+            if prefix_field:
+                self.fields_data[prefix_field + field]['string'] = '%s%s' % \
+                    (prefix_name, self.fields_data[prefix_field +
+                        field]['string'])
+            node = self.model1.insert(parent_node, 0, [name, prefix_field +
+                field, (fields[field].get('required', False) and
+                    common.COLORS['required']) or 'white'])
+            self.fields[prefix_field + field] = (name,
+                    fields[field].get('relation'))
+            if fields[field].get('relation'):
+                self.model1.insert(node, 0, [None, '', 'white'])
+
+    def _get_fields(self, model):
+        try:
+            return RPCExecute('model', model, 'fields_get', None,
+                context=self.context)
+        except RPCException:
+            return ''
+
+    def on_row_expanded(self, treeview, iter, path):
+        child = self.model1.iter_children(iter)
+        if self.model1.get_value(child, 0) is None:
+            prefix_field = self.model1.get_value(iter, 1)
+            _, model = self.fields[prefix_field]
+            name = self.fields_data[prefix_field]['string']
+            self.model_populate(self._get_fields(model), iter, prefix_field +
+                    '/', name + '/')
+            self.model1.remove(child)
 
     def sig_sel(self, widget=None):
         sel = self.view1.get_selection()
@@ -265,8 +265,8 @@ class WinExport(object):
         if relation:
             return
         num = self.model2.append()
-        self.model2.set(num, 0, store.get_value(iter, 0), 1,
-                store.get_value(iter, 1))
+        name = self.fields_data[store.get_value(iter, 1)]['string']
+        self.model2.set(num, 0, name, 1, store.get_value(iter, 1))
 
     def sig_unsel(self, widget=None):
         store, paths = self.view2.get_selection().get_selected_rows()
@@ -278,33 +278,37 @@ class WinExport(object):
         self.model2.clear()
 
     def fill_predefwin(self):
-        ir_export = rpc.RPCProxy('ir.export')
-        ir_export_line = rpc.RPCProxy('ir.export.line')
         try:
-            export_ids = ir_export.search([('resource', '=', self.model)])
-        except Exception, exception:
-            common.process_exception(exception, self.parent)
+            export_ids = RPCExecute('model', 'ir.export', 'search',
+                [('resource', '=', self.model)], 0, None, None,
+                context=self.context)
+        except RPCException:
             return
-        for export in ir_export.read(export_ids):
-            try:
-                fields = ir_export_line.read(export['export_fields'])
-            except Exception, exception:
-                common.process_exception(exception, self.parent)
-                continue
+        try:
+            exports = RPCExecute('model', 'ir.export', 'read', export_ids,
+                None, context=self.context)
+        except RPCException:
+            return
+        try:
+            lines = RPCExecute('model', 'ir.export.line', 'read',
+                sum((x['export_fields'] for x in exports), []), None,
+                context=self.context)
+        except RPCException:
+            return
+        id2lines = {}
+        for line in lines:
+            id2lines.setdefault(line['export'], []).append(line)
+        for export in exports:
             self.predef_model.append((
                 export['id'],
-                [f['name'] for f in fields],
-                export['name'],
-                ', '.join([self.fields_data[f['name']]['string'] \
-                        for f in fields]),
-                ))
+                [x['name'] for x in id2lines.get(export['id'], [])],
+                export['name']))
         self.pref_export.set_model(self.predef_model)
 
     def add_predef(self, widget):
-        name = common.ask('What is the name of this export?', self.parent)
+        name = common.ask(_('What is the name of this export?'))
         if not name:
             return
-        ir_export = rpc.RPCProxy('ir.export')
         iter = self.model2.get_iter_root()
         fields = []
         while iter:
@@ -312,16 +316,19 @@ class WinExport(object):
             fields.append(field_name)
             iter = self.model2.iter_next(iter)
         try:
-            new_id = ir_export.create({'name' : name, 'resource' : self.model,
-                'export_fields' : [('create', {'name' : f}) for f in fields]})
-        except Exception, exception:
-            common.process_exception(exception, self.dialog)
+            new_id, = RPCExecute('model', 'ir.export', 'create', [{
+                    'name': name,
+                    'resource': self.model,
+                    'export_fields': [('create', [{
+                                        'name': x,
+                                        } for x in fields])],
+                    }], context=self.context)
+        except RPCException:
             return
         self.predef_model.append((
             new_id,
             fields,
-            name,
-            ','.join([self.fields_data[f]['string'] for f in fields])))
+            name))
         self.pref_export.set_model(self.predef_model)
 
     def remove_predef(self, widget):
@@ -331,12 +338,11 @@ class WinExport(object):
         (model, i) = sel
         if not i:
             return None
-        ir_export = rpc.RPCProxy('ir.export')
         export_id = model.get_value(i, 0)
         try:
-            ir_export.delete(export_id)
-        except Exception, exception:
-            common.process_exception(exception, self.dialog)
+            RPCExecute('model', 'ir.export', 'delete', [export_id],
+                context=self.context)
+        except RPCException:
             return
         for i in range(len(self.predef_model)):
             if self.predef_model[i][0] == export_id:
@@ -347,11 +353,37 @@ class WinExport(object):
     def sel_predef(self, widget, path, column):
         self.model2.clear()
         for field in self.predef_model[path[0]][1]:
+            if field not in self.fields_data:
+                iter = self.model1.get_iter_first()
+                prefix = ''
+                for parent in field.split('/')[:-1]:
+                    while iter:
+                        if self.model1.get_value(iter, 1) == \
+                                (prefix + parent):
+                            self.on_row_expanded(self.view1, iter,
+                                    self.model1.get_path(iter))
+                            iter = self.model1.iter_children(iter)
+                            prefix += parent + '/'
+                            break
+                        else:
+                            iter = self.model1.iter_next(iter)
+
+            if field not in self.fields_data:
+                continue
             self.model2.append((self.fields_data[field]['string'], field))
 
-    def run(self):
-        button = self.dialog.run()
-        if button == gtk.RESPONSE_OK:
+    def destroy(self):
+        super(WinExport, self).destroy()
+        self.dialog.destroy()
+
+    def show(self):
+        self.dialog.show()
+
+    def hide(self):
+        self.dialog.hide()
+
+    def response(self, dialog, response):
+        if response == gtk.RESPONSE_OK:
             fields = []
             fields2 = []
             iter = self.model2.get_iter_root()
@@ -360,67 +392,52 @@ class WinExport(object):
                 fields2.append(self.model2.get_value(iter, 0))
                 iter = self.model2.iter_next(iter)
             action = self.wid_action.get_active()
-            self.parent.present()
-            self.dialog.destroy()
-            result = self.datas_read(self.ids, self.model, fields,
-                    context=self.context)
+            self.destroy()
+            try:
+                result = RPCExecute('model', self.model, 'export_data',
+                    self.ids, fields, context=self.context)
+            except RPCException:
+                result = []
 
             if action == 0:
                 fileno, fname = tempfile.mkstemp('.csv', 'tryton_')
                 self.export_csv(fname, fields2, result,
                         self.wid_write_field_names.get_active(), popup=False)
-                common.file_open(fname, 'csv', self.parent)
                 os.close(fileno)
+                common.file_open(fname, 'csv')
             else:
                 fname = common.file_selection(_('Save As...'),
-                        parent=self.parent,
                         action=gtk.FILE_CHOOSER_ACTION_SAVE)
                 if fname:
                     self.export_csv(fname, fields2, result,
                             self.wid_write_field_names.get_active())
             return True
         else:
-            self.parent.present()
-            self.dialog.destroy()
+            self.destroy()
             return False
 
     def export_csv(self, fname, fields, result, write_title=False, popup=True):
         try:
-            file_p = file(fname, 'wb+')
+            file_p = open(fname, 'wb+')
             writer = csv.writer(file_p)
             if write_title:
                 writer.writerow(fields)
             for data in result:
                 row = []
                 for val in data:
-                    if type(val) == types.StringType:
-                        row.append(val.replace('\n',' ').replace('\t',' '))
+                    if isinstance(type(val), types.StringType):
+                        row.append(val.replace('\n', ' ').replace('\t', ' '))
                     else:
                         row.append(val)
                 writer.writerow(row)
             file_p.close()
             if popup:
                 if len(result) == 1:
-                    common.message(_('%d record saved!') % len(result),
-                            self.parent)
+                    common.message(_('%d record saved!') % len(result))
                 else:
-                    common.message(_('%d records saved!') % len(result),
-                            self.parent)
+                    common.message(_('%d records saved!') % len(result))
             return True
-        except Exception, exception:
-            common.warning(_("Operation failed!\nError message:\n%s") \
-                     % (exception[0],), self.parent, _('Error'))
+        except IOError, exception:
+            common.warning(_("Operation failed!\nError message:\n%s")
+                % (exception.faultCode,), _('Error'))
             return False
-
-    def datas_read(self, ids, model, fields, context=None):
-        if context is None:
-            context = {}
-        ctx = context.copy()
-        ctx.update(rpc.CONTEXT)
-        try:
-            datas = rpc.execute('model', model,
-                    'export_data', ids, fields, ctx)
-        except Exception, exception:
-            common.process_exception(exception, self.dialog)
-            return []
-        return datas

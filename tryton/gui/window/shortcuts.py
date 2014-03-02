@@ -4,6 +4,7 @@
 import gtk
 import gettext
 from tryton.config import TRYTON_ICON
+from tryton.common import get_toplevel_window
 
 _ = gettext.gettext
 
@@ -11,12 +12,12 @@ _ = gettext.gettext
 class Shortcuts(object):
     'Shortcuts window'
 
-    def __init__(self, parent):
-        self.dialog = gtk.Dialog(_('Keyboard Shortcuts'), parent, gtk.DIALOG_MODAL
-                | gtk.DIALOG_DESTROY_WITH_PARENT | gtk.WIN_POS_CENTER_ON_PARENT
-                | gtk.gdk.WINDOW_TYPE_HINT_DIALOG,
-                (gtk.STOCK_OK, gtk.RESPONSE_OK))
-        self.parent = parent
+    def __init__(self):
+        self.parent = get_toplevel_window()
+        self.dialog = gtk.Dialog(_('Keyboard Shortcuts'), self.parent,
+            gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT
+            | gtk.WIN_POS_CENTER_ON_PARENT | gtk.gdk.WINDOW_TYPE_HINT_DIALOG,
+            (gtk.STOCK_OK, gtk.RESPONSE_OK))
         self.dialog.set_icon(TRYTON_ICON)
         self.dialog.set_has_separator(True)
         self.dialog.set_default_response(gtk.RESPONSE_OK)
@@ -24,33 +25,21 @@ class Shortcuts(object):
         self.dialog.vbox.pack_start(notebook)
 
         shortcuts = [
-                (_('Text Entries Shortcuts'),),
-                ('<Ctrl> + X', _('Cut selected text')),
-                ('<Ctrl> + C', _('Copy selected text')),
-                ('<Ctrl> + V', _('Paste copied text')),
-                ('<Tab>', _('Next widget')),
-                ('<Shift> + <Tab>', _('Previous widget')),
-                (_('Relation Entries Shortcuts'),),
-                ('<F3>', _('Create new relation')),
-                ('<F2>', _('Open/Search relation')),
-                (_('Date/Datetime Entries Shortcuts'),),
-                (_('''You can use special operators:
-* + to increase the date
-* - to decrease the date or clear
-* = to set the date or the current date
-
-Available variables are:
-h for hours
-d for days
-w for weeks (only with +/-)
-m for months
-y for years
-
-Examples:
-"+21d" increase of 21 days the date
-"=11m" set the date to the 11th month of the year
-"-2w" decrease of 2 weeks the date'''),)
-                ]
+            (_('Text Entries Shortcuts'),),
+            ('<Ctrl> + X', _('Cut selected text')),
+            ('<Ctrl> + C', _('Copy selected text')),
+            ('<Ctrl> + V', _('Paste copied text')),
+            ('<Tab>', _('Next widget')),
+            ('<Shift> + <Tab>', _('Previous widget')),
+            (_('Relation Entries Shortcuts'),),
+            ('<F3>', _('Create new relation')),
+            ('<F2>', _('Open/Search relation')),
+            (_('List Entries Shortcuts'),),
+            ('<F3>', _('Create new line')),
+            ('<F2>', _('Open relation')),
+            ('<Del>', _('Mark line for deletion')),
+            ('<Ins>', _('Unmark line for deletion')),
+            ]
         notebook.append_page(self._fill_table(shortcuts),
                 gtk.Label(_('Edition Widgets')))
 
@@ -85,7 +74,7 @@ Examples:
                 label.set_alignment(0, 0.5)
                 table.attach(label, 1, 2, i, i + 1,
                         yoptions=False, xoptions=gtk.FILL)
-            i +=1
+            i += 1
         return table
 
     def run(self):

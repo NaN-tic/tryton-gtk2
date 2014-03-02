@@ -1,16 +1,20 @@
-#This file is part of Tryton.  The COPYRIGHT file at the top level of this repository contains the full copyright notices and license terms.
-#This code is inspired by the pycha project (http://www.lorenzogil.com/projects/pycha/)
+#This file is part of Tryton.  The COPYRIGHT file at the top level of
+#this repository contains the full copyright notices and license terms.
+#This code is inspired by the pycha project
+#(http://www.lorenzogil.com/projects/pycha/)
 import gtk
-from tryton.common import hex2rgb, generateColorscheme, DT_FORMAT, \
-        COLOR_SCHEMES
+from functools import reduce
+from tryton.common import hex2rgb, generateColorscheme, \
+        COLOR_SCHEMES, datetime_strftime
+from tryton.pyson import PYSONDecoder
 import locale
 import math
 import datetime
-import mx.DateTime
-import time
+from dateutil.relativedelta import relativedelta
 import tryton.rpc as rpc
 import cairo
 from tryton.action import Action
+from tryton.gui.window import Window
 from tryton.translate import date_format
 
 
@@ -33,11 +37,11 @@ class Popup(object):
         widget_x, widget_y = widget.window.get_origin()
         width, height = widget.window.get_size()
         popup_width, popup_height = self.win.get_size()
-        if x < popup_width / 2:
-            x = popup_width / 2
-        if x > width - popup_width / 2:
-            x = width - popup_width / 2
-        pos_x = widget_x + x - popup_width / 2
+        if x < popup_width // 2:
+            x = popup_width // 2
+        if x > width - popup_width // 2:
+            x = width - popup_width // 2
+        pos_x = widget_x + x - popup_width // 2
         if pos_x < 0:
             pos_x = 0
         if y < popup_height + 5:
@@ -61,10 +65,11 @@ class Popup(object):
     def enter(self, widget, event):
         self.win.hide()
 
+
 class Graph(gtk.DrawingArea):
     'Graph'
 
-    __gsignals__ = { "expose-event": "override" }
+    __gsignals__ = {"expose-event": "override"}
 
     def __init__(self, xfield, yfields, attrs, model):
         super(Graph, self).__init__()
@@ -124,28 +129,34 @@ class Graph(gtk.DrawingArea):
 
         self.queue_draw()
 
-    def action(self, window):
+    def action(self):
         self.popup.hide()
 
-    def action_keyword(self, ids, window):
+    def action_keyword(self, ids):
         if not ids:
             return
-        ctx = self.models.context.copy()
+        ctx = self.group.context.copy()
         if 'active_ids' in ctx:
             del ctx['active_ids']
         if 'active_id' in ctx:
             del ctx['active_id']
-        return Action.exec_keyword('graph_open', window, {
-            'model': self.model,
-            'id': ids[0],
-            'ids': ids,
-            }, context=ctx, warning=False)
+        event = gtk.get_current_event()
+        allow_similar = False
+        if (event.state & gtk.gdk.CONTROL_MASK
+                or event.state & gtk.gdk.MOD1_MASK):
+            allow_similar = True
+        with Window(hide_current=True, allow_similar=allow_similar):
+            return Action.exec_keyword('graph_open', {
+                    'model': self.model,
+                    'id': ids[0],
+                    'ids': ids,
+                    }, context=ctx, warning=False)
 
     def drawBackground(self, cr, width, height):
         # Fill the background
         cr.save()
         r, g, b = hex2rgb(self.attrs.get('background', '#d5d5d5'))
-        linear = cairo.LinearGradient(width / 2, 0, width / 2, height)
+        linear = cairo.LinearGradient(width // 2, 0, width // 2, height)
         linear.add_color_stop_rgb(0, 1, 1, 1)
         linear.add_color_stop_rgb(1, r, g, b)
         cr.set_source(linear)
@@ -157,14 +168,13 @@ class Graph(gtk.DrawingArea):
     def drawGraph(self, cr, width, height):
         pass
 
-
     def YLabels(self):
         ylabels = []
         if self.yrange == 0.0:
             base = 1
         else:
-            base = 10**int(math.log(self.yrange, 10))
-        for i in range(int(self.yrange / base) + 1):
+            base = 10 ** int(math.log(self.yrange, 10))
+        for i in xrange(int(self.yrange / base) + 1):
             val = int(self.minyval / base) * base + i * base
             h = (val - self.minyval) * self.yscale
             label = locale.format('%.2f', val, True)
@@ -266,7 +276,7 @@ class Graph(gtk.DrawingArea):
         cr.restore()
 
     def drawLegend(self, cr, width, height):
-        if not self.attrs.get('legend', True):
+        if not int(self.attrs.get('legend', 1)):
             return
 
         padding = 4
@@ -317,23 +327,23 @@ class Graph(gtk.DrawingArea):
 
     def _getLegendPosition(self, width, height):
         return self.area.x + self.area.w * 0.05, \
-                self.area.y + self.area.h * 0.05
+            self.area.y + self.area.h * 0.05
 
-    def display(self, models):
-        self.updateDatas(models)
+    def display(self, group):
+        self.updateDatas(group)
         self.setColorScheme()
         self.updateXY()
         self.updateGraph()
         self.queue_draw()
 
-    def updateDatas(self, models):
+    def updateDatas(self, group):
         self.datas = {}
         self.labels = {}
         self.ids = {}
-        self.models = models
+        self.group = group
         minx = None
         maxx = None
-        for model in models:
+        for model in group:
             x = model[self.xfield['name']].get(model)
             if not minx:
                 minx = x
@@ -346,43 +356,39 @@ class Graph(gtk.DrawingArea):
             self.ids[x].append(model.id)
             self.datas.setdefault(x, {})
             for yfield in self.yfields:
-                name = yfield['name']
                 key = yfield.get('key', yfield['name'])
                 self.datas[x].setdefault(key, 0.0)
                 if yfield.get('domain'):
-                    values = rpc.CONTEXT.copy()
-                    values['state'] = 'draft'
-                    for field in model.mgroup.fields:
-                        values[field] = model[field].get(model, check_load=False)
-                    if not eval(yfield['domain'], values):
+                    context = rpc.CONTEXT.copy()
+                    context['context'] = context.copy()
+                    context['_user'] = rpc._USER
+                    for field in model.group.fields:
+                        context[field] = model[field].get(model)
+                    if not PYSONDecoder(context).decode(yfield['domain']):
                         continue
                 if yfield['name'] == '#':
                     self.datas[x][key] += 1
                 else:
                     self.datas[x][key] += \
-                            float(model[yfield['name']].get(model))
+                        float(model[yfield['name']].get(model) or 0)
         if isinstance(minx, datetime.datetime):
-            date = mx.DateTime.mktime(time.strptime(str(minx), '%Y-%m-%d %H:%M:%S'))
-            end_date = mx.DateTime.mktime(time.strptime(str(maxx), '%Y-%m-%d %H:%M:%S'))
-            while date <= end_date:
-                key = datetime.datetime(date.year, date.month, date.day, 0, 0, 0)
-                self.labels[key] = date.strftime(DT_FORMAT)
-                self.datas.setdefault(key, {})
+            date = minx
+            while date <= maxx:
+                self.labels[date] = datetime_strftime(date, date_format())
+                self.datas.setdefault(date, {})
                 for yfield in self.yfields:
-                    self.datas[key].setdefault(
+                    self.datas[date].setdefault(
                             yfield.get('key', yfield['name']), 0.0)
-                date = date + mx.DateTime.RelativeDateTime(days=1)
+                date += relativedelta(days=1)
         elif isinstance(minx, datetime.date):
-            date = mx.DateTime.mktime(time.strptime(str(minx), '%Y-%m-%d'))
-            end_date = mx.DateTime.mktime(time.strptime(str(maxx), '%Y-%m-%d'))
-            while date <= end_date:
-                key = datetime.date(date.year, date.month, date.day)
-                self.labels[key] = date.strftime(DT_FORMAT)
-                self.datas.setdefault(key, {})
+            date = minx
+            while date <= maxx:
+                self.labels[date] = datetime_strftime(date, date_format())
+                self.datas.setdefault(date, {})
                 for yfield in self.yfields:
-                    self.datas[key].setdefault(
+                    self.datas[date].setdefault(
                             yfield.get('key', yfield['name']), 0.0)
-                date = date + mx.DateTime.RelativeDateTime(days=1)
+                date += relativedelta(days=1)
 
     def updateArea(self, cr, width, height):
         maxylabel = ''
@@ -403,7 +409,8 @@ class Graph(gtk.DrawingArea):
             yLabelWidth = 0
         width = width - self.leftPadding - yLabelWidth - self.rightPadding
         height = height - self.topPadding - self.bottomPadding - xLabelHeight
-        self.area = Area(self.leftPadding + yLabelWidth, self.topPadding, width, height)
+        self.area = Area(self.leftPadding + yLabelWidth, self.topPadding,
+            width, height)
 
     def updateXY(self):
         self.maxxval = len(self.datas)
@@ -419,9 +426,9 @@ class Graph(gtk.DrawingArea):
             self.maxyval = 0.0
             self.minyval = 0.0
         else:
-            self.maxyval = max([reduce(lambda x, y: max(x, y), x.values()) \
+            self.maxyval = max([reduce(lambda x, y: max(x, y), x.values())
                     for x in self.datas.values()])
-            self.minyval = min([reduce(lambda x, y: min(x, y), x.values()) \
+            self.minyval = min([reduce(lambda x, y: min(x, y), x.values())
                     for x in self.datas.values()])
         if self.minyval > 0:
             self.minyval = 0.0
@@ -449,6 +456,7 @@ class Graph(gtk.DrawingArea):
 
     def _getDatasKeys(self):
         return [x.get('key', x['name']) for x in self.yfields]
+
 
 class Area(object):
 

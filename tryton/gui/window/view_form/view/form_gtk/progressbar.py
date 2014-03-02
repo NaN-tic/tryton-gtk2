@@ -14,28 +14,20 @@ class ProgressBar(WidgetInterface):
         'top_to_bottom': gtk.PROGRESS_TOP_TO_BOTTOM,
     }
 
-    def __init__(self, window, parent, model, attrs=None):
-        super(ProgressBar, self).__init__(window, parent, model=model, attrs=attrs)
-        self.digits = attrs.get('digits', (16, 2))
+    def __init__(self, field_name, model_name, attrs=None):
+        super(ProgressBar, self).__init__(field_name, model_name, attrs=attrs)
         self.widget = gtk.ProgressBar()
         orientation = self.orientations.get(attrs.get('orientation',
             'left_to_right'), gtk.PROGRESS_LEFT_TO_RIGHT)
         self.widget.set_orientation(orientation)
 
-    def display(self, model, model_field):
-        super(ProgressBar, self).display(model, model_field)
-        if not model_field:
+    def display(self, record, field):
+        super(ProgressBar, self).display(record, field)
+        if not field:
             self.widget.set_text('')
             self.widget.set_fraction(0.0)
             return False
-        value = float(model_field.get(model) or 0.0)
-        if isinstance(self.digits, str):
-            digits = self._view.model.expr_eval(self.digits)
-        else:
-            digits = self.digits
-        self.widget.set_text(locale.format('%.' + str(digits[1]) + 'f',
-            value, True))
+        value = float(field.get(record) or 0.0)
+        digits = field.digits(record)
+        self.widget.set_text(locale.format('%.*f', (digits[1], value), True))
         self.widget.set_fraction(value / 100.0)
-
-    def display_value(self):
-        return self.widget.get_text()
