@@ -100,14 +100,33 @@ class CellRendererText(gtk.GenericCellRenderer):
             editable.modify_text(gtk.STATE_INSENSITIVE, fg_color)
         else:
             editable.modify_bg(gtk.STATE_ACTIVE, style.bg[gtk.STATE_ACTIVE])
-            editable.modify_base(gtk.STATE_NORMAL, style.base[gtk.STATE_NORMAL])
+            editable.modify_base(gtk.STATE_NORMAL,
+                style.base[gtk.STATE_NORMAL])
             editable.modify_fg(gtk.STATE_NORMAL, style.fg[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_NORMAL, style.text[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_INSENSITIVE, style.text[gtk.STATE_INSENSITIVE])
+            editable.modify_text(gtk.STATE_NORMAL,
+                style.text[gtk.STATE_NORMAL])
+            editable.modify_text(gtk.STATE_INSENSITIVE,
+                style.text[gtk.STATE_INSENSITIVE])
 
         editable.set_text(self.text)
         editable.grab_focus()
         editable.show()
         return editable
 
+
+class CellRendererTextCompletion(CellRendererText):
+
+    def __init__(self, set_completion):
+        super(CellRendererTextCompletion, self).__init__()
+        self.set_completion = set_completion
+
+    def on_start_editing(self, event, widget, path, background_area, cell_area,
+            flags):
+        editable = super(CellRendererTextCompletion,
+            self).on_start_editing(event, widget, path, background_area,
+                cell_area, flags)
+        self.set_completion(editable, path)
+        return editable
+
 gobject.type_register(CellRendererText)
+gobject.type_register(CellRendererTextCompletion)

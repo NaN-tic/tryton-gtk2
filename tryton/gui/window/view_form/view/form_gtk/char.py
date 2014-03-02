@@ -4,13 +4,14 @@ import gettext
 
 import gobject
 import gtk
-from interface import WidgetInterface
+from interface import WidgetInterface, TranslateMixin
 from tryton.common import Tooltips
+from tryton.common.entry_position import manage_entry_position
 
 _ = gettext.gettext
 
 
-class Char(WidgetInterface):
+class Char(WidgetInterface, TranslateMixin):
     "Char"
 
     def __init__(self, field_name, model_name, attrs=None):
@@ -33,12 +34,41 @@ class Char(WidgetInterface):
             focus_entry = self.entry
 
         focus_entry.set_property('activates_default', True)
-        focus_entry.set_width_chars(10)
-        focus_entry.set_max_length(int(attrs.get('size', 0)))
         focus_entry.connect('activate', self.sig_activate)
-        focus_entry.connect('focus-in-event', lambda x, y: self._focus_in())
         focus_entry.connect('focus-out-event', lambda x, y: self._focus_out())
-        self.widget.pack_start(self.entry)
+        focus_entry.connect('key-press-event', self.send_modified)
+        manage_entry_position(focus_entry)
+        expand, fill = True, True
+        if attrs.get('size'):
+            expand, fill = False, False
+        self.widget.pack_start(self.entry, expand=expand, fill=fill)
+
+        self.button = None
+        if attrs.get('translate'):
+            self.button = self.translate_button()
+            self.widget.pack_start(self.button, False, False)
+
+    def translate_widget(self):
+        entry = gtk.Entry()
+        entry.set_property('activates_default', True)
+        if self.record:
+            field_size = self.record.expr_eval(self.attrs.get('size'))
+            entry.set_width_chars(field_size or -1)
+            entry.set_max_length(field_size or 0)
+        return entry
+
+    @staticmethod
+    def translate_widget_set(widget, value):
+        widget.set_text(value or '')
+
+    @staticmethod
+    def translate_widget_get(widget):
+        return widget.get_text()
+
+    @staticmethod
+    def translate_widget_set_readonly(widget, value):
+        widget.set_editable(not value)
+        widget.props.sensitive = not value
 
     def _color_widget(self):
         if self.autocomplete:
@@ -48,10 +78,21 @@ class Char(WidgetInterface):
     def grab_focus(self):
         return self.entry.grab_focus()
 
+    @property
+    def modified(self):
+        if self.record and self.field:
+            entry = self.entry.get_child() if self.autocomplete else self.entry
+            value = entry.get_text() or ''
+            return self.field.get_client(self.record) != value
+        return False
+
     def set_value(self, record, field):
         entry = self.entry.get_child() if self.autocomplete else self.entry
-        value = entry.get_text() or False
+        value = entry.get_text() or ''
         return field.set_client(record, value)
+
+    def get_value(self):
+        return self.entry.get_text()
 
     def display(self, record, field):
         super(Char, self).display(record, field)
@@ -64,10 +105,24 @@ class Char(WidgetInterface):
                     self.entry_store.append((row,))
         elif self.autocomplete:
             self.entry_store.clear()
+
+        # Set size
+        if self.autocomplete:
+            size_entry = self.entry.get_child()
+        else:
+            size_entry = self.entry
+        if record:
+            field_size = record.expr_eval(self.attrs.get('size'))
+            size_entry.set_width_chars(field_size or -1)
+            size_entry.set_max_length(field_size or 0)
+        else:
+            size_entry.set_width_chars(-1)
+            size_entry.set_max_length(0)
+
         if not field:
             value = ''
         else:
-            value = field.get(record) or ''
+            value = field.get_client(record)
 
         if not self.autocomplete:
             self.entry.set_text(value)
@@ -87,6 +142,8 @@ class Char(WidgetInterface):
             self.entry.set_button_sensitivity(sensitivity[value])
         else:
             self.entry.set_editable(not value)
+        if self.button:
+            self.button.set_sensitive(not value)
         if value:
             self.widget.set_focus_chain([])
         else:

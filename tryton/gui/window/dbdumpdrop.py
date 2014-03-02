@@ -1,7 +1,5 @@
 # This file is part of Tryton.  The COPYRIGHT file at the top level of this
 # repository contains the full copyright notices and license terms.
-import threading
-
 import gtk
 import gobject
 import gettext
@@ -11,44 +9,45 @@ import tryton.rpc as rpc
 
 _ = gettext.gettext
 
+
 class DBBackupDrop(object):
     """
     Widget for database backup and drop.
     """
-    @staticmethod
-    def refreshlist(widget, db_widget, label, db_progress, host, port):
-        db_widget.hide()
-        label.hide()
+    def refreshlist(self, host, port):
+        self.combo_database.hide()
+        self.combo_database_label.hide()
+        self.combo_database_entry.hide()
         dbprogress = common.DBProgress(host, port)
-        def callback(dbs, createdb):
-            if dbs is None or dbs == -1:
-                if dbs is None:
-                    label.set_label('<b>' + \
-                            _('Could not connect to server!') + '</b>')
-                else:
-                    label.set_label('<b>' + \
-                        _('This client version is not compatible with the server!')
-                        + '</b>')
-                db_widget.hide()
-                label.show()
-            elif dbs == 0:
-                label.set_label('<b>' + \
-                        _('No database found, you must create one!') + '</b>')
-                db_widget.hide()
-                label.show()
-            else:
-                label.hide()
-                db_widget.show()
-        dbprogress.update(db_widget, db_progress, callback)
 
-    @staticmethod
-    def refreshlist_ask(widget, server_widget, db_widget, label, db_progress):
-        res = common.request_server(server_widget)
+        def callback(dbs):
+            if dbs is None:
+                self.combo_database_label.set_label('<b>' +
+                    _('Could not connect to server!') + '</b>')
+                self.combo_database_label.show()
+            elif dbs == -1:
+                self.combo_database_label.set_label('<b>' +
+                    _('This client version is not compatible '
+                        'with the server!')
+                    + '</b>')
+                self.combo_database_label.show()
+            elif dbs == -2:
+                self.combo_database_entry.show()
+                self.combo_database_entry.grab_focus()
+            elif dbs == 0:
+                self.combo_database_label.set_label('<b>'
+                    + _('No database found, you must create one!') + '</b>')
+                self.combo_database_label.show()
+            else:
+                self.combo_database.show()
+        dbprogress.update(self.combo_database, self.db_progressbar, callback)
+
+    def refreshlist_ask(self, widget=None):
+        res = common.request_server(self.entry_server_connection)
         if not res:
             return None
         host, port = res
-        DBBackupDrop.refreshlist(widget, db_widget, label, db_progress, host,
-            port)
+        self.refreshlist(host, port)
         return (host, port)
 
     def event_show_button_ok(self, widget, event, data=None):
@@ -58,9 +57,10 @@ class DBBackupDrop(object):
         must be filled, then the Create button is set to sensitive. This
         event method doesn't check the valid of single entrys.
         """
-        if  self.entry_server_connection.get_text() !=  "" \
-                and self.combo_database.get_active_text() != "" \
-                and self.entry_serverpasswd.get_text() != "":
+        if (self.entry_server_connection.get_text() != ""
+                and (self.combo_database.get_active_text() != ""
+                    or self.combo_database_entry.get_text() != "")
+                and self.entry_serverpasswd.get_text() != ""):
             widget.unset_flags(gtk.HAS_DEFAULT)
             self.button_ok.set_sensitive(True)
             self.button_ok.set_flags(gtk.CAN_DEFAULT)
@@ -73,7 +73,7 @@ class DBBackupDrop(object):
 
     def __init__(self, function=None):
         # This widget is used for creating and droping a database!
-        if function =="backup":
+        if function == "backup":
             dialog_title = _("Backup a database")
             button_ok_text = _("Backup")
             button_ok_tooltip = _("Backup the choosen database.")
@@ -96,8 +96,8 @@ class DBBackupDrop(object):
         self.dialog.set_icon(TRYTON_ICON)
         self.dialog.connect("key-press-event", self.event_show_button_ok)
         self.tooltips = common.Tooltips()
-        self.dialog.add_button("gtk-cancel", \
-                gtk.RESPONSE_CANCEL)
+        self.dialog.add_button("gtk-cancel",
+            gtk.RESPONSE_CANCEL)
         self.button_ok = gtk.Button(button_ok_text)
         self.button_ok.set_flags(gtk.CAN_DEFAULT)
         self.button_ok.set_flags(gtk.HAS_DEFAULT)
@@ -114,14 +114,15 @@ class DBBackupDrop(object):
         table.set_border_width(10)
         table.set_row_spacings(3)
         table.set_col_spacings(3)
-        self.dialog_vbox.pack_start(table, True, False,0)
+        self.dialog_vbox.pack_start(table, True, False, 0)
 
         label_subtitle = gtk.Label()
-        label_subtitle.set_markup("<b>"+ label_subtitle_text + "</b>")
+        label_subtitle.set_markup("<b>" + label_subtitle_text + "</b>")
         label_subtitle.set_justify(gtk.JUSTIFY_LEFT)
         label_subtitle.set_alignment(0, 1)
-        label_subtitle.set_padding( 9, 5)
-        table.attach(label_subtitle, 0, 3, 0, 1, yoptions=False, xoptions=gtk.FILL)
+        label_subtitle.set_padding(9, 5)
+        table.attach(label_subtitle, 0, 3, 0, 1, yoptions=False,
+            xoptions=gtk.FILL)
 
         hseparator = gtk.HSeparator()
         table.attach(hseparator, 0, 3, 1, 2, yoptions=False)
@@ -136,18 +137,18 @@ class DBBackupDrop(object):
         self.entry_server_connection.set_sensitive(False)
         self.entry_server_connection.unset_flags(gtk.CAN_FOCUS)
         self.entry_server_connection.set_editable(False)
-        self.tooltips.set_tip(self.entry_server_connection, _("This is the " \
-                "URL of the server. Use server 'localhost' and port '8000' " \
-                "if the server is installed on this computer. " \
+        self.tooltips.set_tip(self.entry_server_connection, _("This is the "
+                "URL of the server. Use server 'localhost' and port '8000' "
+                "if the server is installed on this computer. "
                 "Click on 'Change' to change the address."))
         table.attach(self.entry_server_connection, 1, 2, 2, 3,
                 yoptions=gtk.FILL)
 
-        self.button_server_change = gtk.Button(_("C_hange"), stock=None, \
-                use_underline=True)
+        self.button_server_change = gtk.Button(_("C_hange"), stock=None,
+            use_underline=True)
         img_button_server_change = gtk.Image()
-        img_button_server_change.set_from_stock('tryton-preferences-system', \
-                gtk.ICON_SIZE_BUTTON)
+        img_button_server_change.set_from_stock('tryton-preferences-system',
+            gtk.ICON_SIZE_BUTTON)
         self.button_server_change.set_image(img_button_server_change)
         table.attach(self.button_server_change, 2, 3, 2, 3, yoptions=False)
 
@@ -169,9 +170,11 @@ class DBBackupDrop(object):
         self.combo_database_label = gtk.Label()
         self.combo_database_label.set_use_markup(True)
         self.combo_database_label.set_alignment(0, 1)
+        self.combo_database_entry = gtk.Entry()
         vbox_combo.pack_start(self.combo_database)
         vbox_combo.pack_start(self.combo_database_label)
         vbox_combo.pack_start(self.db_progressbar)
+        vbox_combo.pack_start(self.combo_database_entry)
         width, height = 0, 0
         # Compute size_request of box in order to prevent "form jumping"
         for child in vbox_combo.get_children():
@@ -183,16 +186,16 @@ class DBBackupDrop(object):
         self.label_serverpasswd = gtk.Label(_("Tryton Server Password:"))
         self.label_serverpasswd.set_justify(gtk.JUSTIFY_RIGHT)
         self.label_serverpasswd.set_alignment(1, 0.5)
-        self.label_serverpasswd.set_padding( 3, 3)
+        self.label_serverpasswd.set_padding(3, 3)
         table.attach(self.label_serverpasswd, 0, 1, 4, 5, yoptions=False,
             xoptions=gtk.FILL)
 
         self.entry_serverpasswd = gtk.Entry()
         self.entry_serverpasswd.set_visibility(False)
         self.entry_serverpasswd.set_activates_default(True)
-        self.tooltips.set_tip(self.entry_serverpasswd, _("This is the " \
-                "password of the Tryton server. It doesn't belong to a " \
-                "real user. This password is usually defined in the trytond " \
+        self.tooltips.set_tip(self.entry_serverpasswd, _("This is the "
+                "password of the Tryton server. It doesn't belong to a "
+                "real user. This password is usually defined in the trytond "
                 "configuration."))
         table.attach(self.entry_serverpasswd, 1, 3, 4, 5, yoptions=False)
 
@@ -203,18 +206,12 @@ class DBBackupDrop(object):
         self.dialog.set_default_response(gtk.RESPONSE_OK)
         self.dialog.show_all()
 
-        pass_widget = self.entry_serverpasswd
-        server_widget = self.entry_server_connection
-        server_widget.set_text('%(login.server)s:%(login.port)s' % CONFIG)
-        db_widget = self.combo_database
-        db_progress = self.db_progressbar
-        label = self.combo_database_label
-        self.refreshlist(None, db_widget, label, db_progress,
-            CONFIG['login.server'], CONFIG['login.port'])
+        self.entry_server_connection.set_text(
+            '%(login.server)s:%(login.port)s' % CONFIG)
+        self.refreshlist(CONFIG['login.server'], CONFIG['login.port'])
 
-        change_button = self.button_server_change
-        change_button.connect_after('clicked', DBBackupDrop.refreshlist_ask,
-                server_widget, db_widget, label, db_progress)
+        self.button_server_change.connect_after('clicked',
+            self.refreshlist_ask)
 
         while True:
             database = False
@@ -222,9 +219,14 @@ class DBBackupDrop(object):
             passwd = False
             res = self.dialog.run()
             if res == gtk.RESPONSE_OK:
-                database = db_widget.get_active_text()
-                url = server_widget.get_text()
-                passwd = pass_widget.get_text()
+                if self.combo_database.get_visible():
+                    database = self.combo_database.get_active_text()
+                elif self.combo_database_entry.get_visible():
+                    database = self.combo_database_entry.get_text()
+                else:
+                    continue
+                url = self.entry_server_connection.get_text()
+                passwd = self.entry_serverpasswd.get_text()
                 break
             if res != gtk.RESPONSE_OK:
                 self.dialog.destroy()
@@ -234,4 +236,3 @@ class DBBackupDrop(object):
         self.dialog.destroy()
 
         return (url, database, passwd)
-

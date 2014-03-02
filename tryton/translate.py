@@ -5,7 +5,7 @@ import os
 import locale
 import gettext
 from version import PACKAGE
-from tryton.client import CURRENT_DIR, PREFIX
+from tryton.config import CURRENT_DIR
 import logging
 import gtk
 import sys
@@ -157,7 +157,7 @@ def setlang(lang=None, locale_dict=None):
     "Set language"
     locale_dir = os.path.join(CURRENT_DIR, 'share/locale')
     if not os.path.isdir(locale_dir):
-        locale_dir = os.path.join(PREFIX, 'share/locale')
+        locale_dir = os.path.join(sys.prefix, 'share/locale')
     if lang:
         encoding = locale.getdefaultlocale()[1]
         if not encoding:
@@ -180,7 +180,7 @@ def setlang(lang=None, locale_dict=None):
             os.environ['LANG'] = lang + '.' + encoding
             locale.setlocale(locale.LC_ALL, lang2 + '.' + encoding)
         except locale.Error:
-            logging.getLogger('translate').info(
+            logging.getLogger(__name__).info(
                     _('Unable to set locale %s') % lang2 + '.' + encoding)
 
     if os.path.isdir(locale_dir):
@@ -197,11 +197,13 @@ def setlang(lang=None, locale_dict=None):
             conv[field] = locale_dict[field]
         locale.localeconv = lambda: conv
 
+
 def set_language_direction(direction):
     if direction == 'rtl':
         gtk.widget_set_default_direction(gtk.TEXT_DIR_RTL)
     else:
         gtk.widget_set_default_direction(gtk.TEXT_DIR_LTR)
+
 
 def date_format():
     '''

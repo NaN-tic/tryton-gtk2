@@ -1,6 +1,5 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-import gettext
 import gtk
 from char import Char
 import webbrowser
@@ -27,6 +26,16 @@ class URL(Char):
     def display(self, record, field):
         super(URL, self).display(record, field)
         self.set_tooltips()
+        if record and 'icon' in self.attrs:
+            icon = self.attrs['icon']
+            if icon in record.group.fields:
+                value = record[icon].get_client(record) or 'tryton-web-browser'
+            else:
+                value = icon
+            common.ICONFACTORY.register_icon(value)
+            img = gtk.Image()
+            img.set_from_stock(value, gtk.ICON_SIZE_SMALL_TOOLBAR)
+            self.button.set_image(img)
 
     def set_tooltips(self):
         value = self.entry.get_text()
@@ -45,6 +54,7 @@ class URL(Char):
         else:
             self.entry.show()
             self.widget.set_focus_chain([self.entry])
+        self.button.set_sensitive(True)
 
     def button_clicked(self, widget):
         value = self.entry.get_text()
@@ -104,4 +114,3 @@ class SIP(URL):
         else:
             self.tooltips.set_tip(self.button, '')
             self.tooltips.disable()
-

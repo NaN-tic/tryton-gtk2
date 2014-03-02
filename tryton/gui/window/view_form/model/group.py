@@ -1,13 +1,12 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-import copy
-import tryton.rpc as rpc
+from weakref import WeakSet
+
 from record import Record
 from field import Field, O2MField
 from tryton.signal_event import SignalEvent
-import tryton.common as common
-from tryton.exceptions import TrytonServerError
 from tryton.common.domain_inversion import is_leaf
+from tryton.common import RPCExecute, RPCException, MODELACCESS
 
 
 class Group(SignalEvent, list):
@@ -23,6 +22,7 @@ class Group(SignalEvent, list):
         self.lock_signal = False
         self.parent = parent
         self.parent_name = parent_name or ''
+        self.children = []
         self.child_name = child_name
         self.parent_datetime_field = parent_datetime_field
         self._context = context or {}
@@ -33,12 +33,28 @@ class Group(SignalEvent, list):
         self.load(ids)
         self.record_deleted, self.record_removed = [], []
         self.on_write = set()
-        self.readonly = readonly
-        if self._context.get('_datetime'):
-            self.readonly = True
+        self.__readonly = readonly
         self.__id2record = {}
         self.__field_childs = None
         self.exclude_field = None
+        self.pool = WeakSet()
+        self.skip_model_access = False
+
+        if self.parent and self.parent.model_name == model_name:
+            self.parent.group.children.append(self)
+
+    @property
+    def readonly(self):
+        # Must skip res.user for Preference windows
+        if (self._context.get('_datetime')
+                or (not MODELACCESS[self.model_name]['write']
+                    and not self.skip_model_access)):
+            return True
+        return self.__readonly
+
+    @readonly.setter
+    def readonly(self, value):
+        self.__readonly = value
 
     @property
     def domain(self):
@@ -98,21 +114,18 @@ class Group(SignalEvent, list):
         if idx >= 1:
             if idx + 1 < self.__len__():
                 self.__getitem__(idx - 1).next[id(self)] = \
-                        self.__getitem__(idx + 1)
+                    self.__getitem__(idx + 1)
             else:
                 self.__getitem__(idx - 1).next[id(self)] = None
-        if not self.lock_signal:
-            self.signal('group-list-changed', ('record-removed', record))
+        self.signal('group-list-changed', ('record-removed', record))
         super(Group, self).remove(record)
         del self.__id2record[record.id]
 
     def clear(self):
-        if not self.lock_signal:
-            for record in self[:]:
-                self.signal('group-list-changed', ('record-removed', record))
-                self.pop(0)
-        if not self.lock_signal:
-            self.signal('group-list-changed', ('group-cleared',))
+        for record in self[:]:
+            self.signal('group-list-changed', ('record-removed', record))
+            record.destroy()
+            self.pop(0)
         self.__id2record = {}
         self.record_removed, self.record_deleted = [], []
 
@@ -150,10 +163,12 @@ class Group(SignalEvent, list):
         saved = []
         for record in self:
             saved.append(record.save(force_reload=False))
+        if self.record_deleted:
+            self.delete(self.record_deleted)
         return saved
 
-    def delete(self, records, context=None):
-        return Record.delete(records, context=context)
+    def delete(self, records):
+        return Record.delete(records)
 
     @property
     def root_group(self):
@@ -174,8 +189,11 @@ class Group(SignalEvent, list):
         return ids
 
     def reload(self, ids):
-        for record in self:
-            if record.id in ids and not record.modified:
+        for child in self.children:
+            child.reload(ids)
+        for id_ in ids:
+            record = self.get(id_)
+            if record and not record.modified:
                 record._loaded.clear()
 
     def on_write_ids(self, ids):
@@ -183,17 +201,14 @@ class Group(SignalEvent, list):
             return []
         res = []
         for fnct in self.on_write:
-            args = ('model', self.model_name, fnct, ids, self.context)
             try:
-                res += rpc.execute(*args)
-            except TrytonServerError, exception:
-                res2 = common.process_exception(exception, *args)
-                if not res2:
-                    return []
-                res += res2
+                res += RPCExecute('model', self.model_name, fnct, ids,
+                    main_iteration=False, context=self.context)
+            except RPCException:
+                return []
         return list({}.fromkeys(res))
 
-    def load(self, ids, display=True, modified=False, id2record=None):
+    def load(self, ids, modified=False):
         if not ids:
             return True
 
@@ -224,31 +239,35 @@ class Group(SignalEvent, list):
             self.lock_signal = False
             self.signal('group-cleared')
 
-        if new_records and display:
-            self.signal('group-changed', new_records[0])
-
         if new_records and modified:
+            new_records[0].signal('record-modified')
             new_records[0].signal('record-changed')
 
         self.current_idx = 0
         return True
 
     def _get_context(self):
-        ctx = rpc.CONTEXT.copy()
+        ctx = self._context.copy()
+        if self.parent:
+            ctx.update(self.parent.context_get())
+            if self.child_name in self.parent.group.fields:
+                field = self.parent.group.fields[self.child_name]
+                ctx.update(field.context_get(self.parent))
         ctx.update(self._context)
         if self.parent_datetime_field:
-            ctx['_datetime'] = self.parent.get_eval(check_load=False)\
-                    [self.parent_datetime_field]
+            ctx['_datetime'] = self.parent.get_eval(
+                )[self.parent_datetime_field]
         return ctx
 
     context = property(_get_context)
 
-    def add(self, record, position=-1, modified=True):
+    def add(self, record, position=-1):
         if record.group is not self:
             record.signal_unconnect(record.group)
             record.group = self
             record.signal_connect(self, 'record-changed', self._record_changed)
-            record.signal_connect(self, 'record-modified', self._record_modified)
+            record.signal_connect(self, 'record-modified',
+                self._record_modified)
         if position == -1:
             self.append(record)
         else:
@@ -260,34 +279,36 @@ class Group(SignalEvent, list):
             if record_del.id == record.id:
                 self.record_deleted.remove(record)
         self.current_idx = position
-        if modified:
-            record.modified_fields.setdefault('id')
-            record.signal('record-modified')
+        record.modified_fields.setdefault('id')
+        record.signal('record-modified')
         self.signal('group-changed', record)
         return record
 
     def set_sequence(self, field='sequence'):
         index = 0
+        changed = False
         for record in self:
             if record[field]:
                 if index >= record[field].get(record):
                     index += 1
-                    record[field].set_client(record, index)
+                    record.signal_unconnect(self, 'record-changed')
+                    try:
+                        record[field].set_client(record, index)
+                    finally:
+                        record.signal_connect(self, 'record-changed',
+                            self._record_changed)
+                    changed = record
                 else:
                     index = record[field].get(record)
+        if changed:
+            self.signal('group-changed', changed)
 
-    def new(self, default=True, domain=None, context=None, signal=True,
-            obj_id=None):
+    def new(self, default=True, obj_id=None):
         record = Record(self.model_name, obj_id, group=self)
+        if default:
+            record.default_get()
         record.signal_connect(self, 'record-changed', self._record_changed)
         record.signal_connect(self, 'record-modified', self._record_modified)
-        if default:
-            ctx = {}
-            ctx.update(context or {})
-            ctx.update(self.context)
-            record.default_get(domain, ctx)
-        if signal:
-            self.signal('group-changed', record)
         return record
 
     def unremove(self, record, signal=True):
@@ -351,10 +372,7 @@ class Group(SignalEvent, list):
             return None
         return self[self.current_idx]
 
-    def add_fields(self, fields, context=None, signal=True):
-        if context is None:
-            context = {}
-
+    def add_fields(self, fields, signal=True):
         to_add = {}
         for name, attr in fields.iteritems():
             if name not in self.fields:
@@ -370,20 +388,13 @@ class Group(SignalEvent, list):
         for record in self:
             if record.id < 0:
                 new.append(record)
-        ctx = context.copy()
 
         if len(new) and len(to_add):
-            ctx.update(self.context)
-            args = ('model', self.model_name, 'default_get', to_add.keys(), ctx)
             try:
-                values = rpc.execute(*args)
-            except TrytonServerError, exception:
-                values = common.process_exception(exception, *args)
-                if not values:
-                    return False
-            for name in to_add:
-                if name not in values:
-                    values[name] = False
+                values = RPCExecute('model', self.model_name, 'default_get',
+                    to_add.keys(), main_iteration=False, context=self.context)
+            except RPCException:
+                return False
             for record in new:
                 record.set_default(values, signal=signal)
 
@@ -398,14 +409,13 @@ class Group(SignalEvent, list):
         del self.__id2record[old_id]
 
     def destroy(self):
+        if self.parent:
+            try:
+                self.parent.group.children.remove(self)
+            except ValueError:
+                pass
+        self.clear()
         super(Group, self).destroy()
-        self.parent = None
-        self.fields = {}
-        self.record_deleted, self.record_removed = [], []
-        self.__id2record = None
-        for record in self:
-            record.destroy()
-        self[:] = []
 
     def get_by_path(self, path):
         'return record by path'

@@ -10,27 +10,13 @@ class Float(Integer):
 
     def __init__(self, field_name, model_name, attrs=None):
         super(Float, self).__init__(field_name, model_name, attrs=attrs)
-        self.digits = (16, 2)
-        self.entry.set_width_chars(sum(self.digits))
         self.entry.connect('key-press-event', self.key_press_event)
-
-    def set_value(self, record, field):
-        try:
-            value = locale.atof(self.entry.get_text())
-        except ValueError:
-            value = 0.0
-        return field.set_client(record, value)
 
     def display(self, record, field):
         super(Float, self).display(record, field)
-        if not field:
-            self.entry.set_text('')
-            return False
-        self.digits = field.attrs.get('digits', (16, 2))
-        digits = record.expr_eval(self.digits)
-        self.entry.set_width_chars(sum(digits))
-        self.entry.set_text(locale.format('%.' + str(digits[1]) + 'f',
-            field.get(record) or 0.0, True))
+        if field:
+            digits = field.digits(record, factor=self.factor)
+            self.entry.set_width_chars(sum(digits))
 
     def key_press_event(self, widget, event):
         for name in ('KP_Decimal', 'KP_Separator'):
@@ -51,7 +37,7 @@ class Float(Integer):
         if new_value in ('-', decimal_point):
             return
 
-        digits = self.record.expr_eval(self.digits)
+        digits = self.field.digits(self.record, factor=self.factor)
 
         try:
             locale.atof(new_value)
@@ -67,4 +53,3 @@ class Float(Integer):
         if len(new_int) > digits[0] \
                 or len(new_decimal) > digits[1]:
             entry.stop_emission('insert-text')
-

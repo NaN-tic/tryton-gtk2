@@ -13,11 +13,13 @@ import socket
 import gzip
 import StringIO
 import hashlib
-import sys
 import base64
+import threading
+from functools import partial
+from contextlib import contextmanager
 
 __all__ = ["ResponseError", "Fault", "ProtocolError", "Transport",
-    "ServerProxy"]
+    "ServerProxy", "ServerPool"]
 CONNECT_TIMEOUT = 5
 DEFAULT_TIMEOUT = None
 
@@ -38,8 +40,10 @@ class Fault(xmlrpclib.Fault):
             (repr(self.faultCode), repr(self.faultString))
             )
 
+
 class ProtocolError(xmlrpclib.ProtocolError):
     pass
+
 
 def object_hook(dct):
     if '__class__' in dct:
@@ -48,6 +52,8 @@ def object_hook(dct):
                     dct['hour'], dct['minute'], dct['second'])
         elif dct['__class__'] == 'date':
             return datetime.date(dct['year'], dct['month'], dct['day'])
+        elif dct['__class__'] == 'time':
+            return datetime.time(dct['hour'], dct['minute'], dct['second'])
         elif dct['__class__'] == 'buffer':
             return buffer(base64.decodestring(dct['base64']))
         elif dct['__class__'] == 'Decimal':
@@ -78,6 +84,12 @@ class JSONEncoder(json.JSONEncoder):
                     'month': obj.month,
                     'day': obj.day,
                     }
+        elif isinstance(obj, datetime.time):
+            return {'__class__': 'time',
+                'hour': obj.hour,
+                'minute': obj.minute,
+                'second': obj.second,
+                }
         elif isinstance(obj, buffer):
             return {'__class__': 'buffer',
                 'base64': base64.encodestring(obj),
@@ -114,7 +126,7 @@ class JSONUnmarshaller(object):
 class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
 
     accept_gzip_encoding = True
-    encode_threshold = 1400 # common MTU
+    encode_threshold = 1400  # common MTU
 
     def __init__(self, fingerprints=None, ca_certs=None):
         xmlrpclib.Transport.__init__(self)
@@ -128,7 +140,8 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
         return parser, target
 
     def get_host_info(self, host):
-        host, extra_headers, x509 = xmlrpclib.Transport.get_host_info(self, host)
+        host, extra_headers, x509 = xmlrpclib.Transport.get_host_info(
+            self, host)
         if extra_headers is None:
             extra_headers = []
         extra_headers.append(('Connection', 'keep-alive'))
@@ -156,11 +169,11 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
             return self._connection[1]
         host, extra_headers, x509 = self.get_host_info(host)
 
-        ca_certs =  self.__ca_certs
+        ca_certs = self.__ca_certs
         cert_reqs = ssl.CERT_REQUIRED if ca_certs else ssl.CERT_NONE
 
-
         class HTTPSConnection(httplib.HTTPSConnection):
+
             def connect(self):
                 sock = socket.create_connection((self.host, self.port),
                     self.timeout)
@@ -174,6 +187,8 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
             self._connection = host, httplib.HTTPConnection(host,
                 timeout=CONNECT_TIMEOUT)
             self._connection[1].connect()
+            sock = self._connection[1].sock
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         def https_connection():
             self._connection = host, HTTPSConnection(host,
@@ -181,16 +196,18 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
             try:
                 self._connection[1].connect()
                 sock = self._connection[1].sock
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 try:
                     peercert = sock.getpeercert(True)
                 except socket.error:
                     peercert = None
+
                 def format_hash(value):
                     return reduce(lambda x, y: x + y[1].upper() +
-                            ((y[0] % 2 and y[0] + 1 < len(value)) and ':' or ''),
-                            enumerate(value), '')
+                        ((y[0] % 2 and y[0] + 1 < len(value)) and ':' or ''),
+                        enumerate(value), '')
                 return format_hash(hashlib.sha1(peercert).hexdigest())
-            except ssl.SSLError, e:
+            except ssl.SSLError:
                 http_connection()
 
         fingerprint = ''
@@ -212,52 +229,6 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
         self._connection[1].timeout = DEFAULT_TIMEOUT
         self._connection[1].sock.settimeout(DEFAULT_TIMEOUT)
         return self._connection[1]
-
-    if sys.version_info[:2] <= (2, 6):
-
-        def request(self, host, handler, request_body, verbose=0):
-            h = self.make_connection(host)
-            if verbose:
-                h.set_debuglevel(1)
-
-            self.send_request(h, handler, request_body)
-            self.send_host(h, host)
-            self.send_user_agent(h)
-            self.send_content(h, request_body)
-
-            response = h.getresponse()
-
-            if response.status != 200:
-                raise ProtocolError(
-                    host + handler,
-                    response.status,
-                    response.reason,
-                    response.getheaders()
-                    )
-
-            self.verbose = verbose
-
-            try:
-                sock = h._conn.sock
-            except AttributeError:
-                sock = None
-
-            if response.getheader("Content-Encoding", "") == "gzip":
-                response = gzip.GzipFile(mode="rb",
-                    fileobj=StringIO.StringIO(response.read()))
-                sock = None
-
-            return self._parse_response(response, sock)
-
-        def send_request(self, connection, handler, request_body):
-            xmlrpclib.Transport.send_request(self, connection, handler,
-                request_body)
-            connection.putheader("Accept-Encoding", "gzip")
-
-        def close(self):
-            if self._connection[1]:
-                self._connection[1].close()
-                self._connection = (None, None)
 
 
 class ServerProxy(xmlrpclib.ServerProxy):
@@ -316,3 +287,43 @@ class ServerProxy(xmlrpclib.ServerProxy):
     def ssl(self):
         return isinstance(self.__transport.make_connection(self.__host),
             httplib.HTTPSConnection)
+
+
+class ServerPool(object):
+
+    def __init__(self, *args, **kwargs):
+        self.ServerProxy = partial(ServerProxy, *args, **kwargs)
+        self._lock = threading.Lock()
+        self._pool = []
+        self._used = {}
+
+    def getconn(self):
+        with self._lock:
+            if self._pool:
+                conn = self._pool.pop()
+            else:
+                conn = self.ServerProxy()
+            self._used[id(conn)] = conn
+            return conn
+
+    def putconn(self, conn):
+        with self._lock:
+            self._pool.append(conn)
+            del self._used[id(conn)]
+
+    def close(self):
+        with self._lock:
+            for conn in self._pool + self._used.values():
+                conn.close()
+
+    @property
+    def ssl(self):
+        for conn in self._pool + self._used.values():
+            return conn.ssl
+        return False
+
+    @contextmanager
+    def __call__(self):
+        conn = self.getconn()
+        yield conn
+        self.putconn(conn)

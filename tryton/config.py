@@ -15,10 +15,12 @@ from tryton.exceptions import TrytonError
 
 _ = gettext.gettext
 
+
 def get_home_dir():
     if os.name == 'nt':
         return os.path.join(os.environ['HOMEDRIVE'], os.environ['HOMEPATH'])
     return os.environ['HOME']
+
 
 def get_config_dir():
     if os.name == 'nt':
@@ -28,20 +30,6 @@ def get_config_dir():
             VERSION.rsplit('.', 1)[0])
 if not os.path.isdir(get_config_dir()):
     os.makedirs(get_config_dir(), 0700)
-
-def find_path(progs, args):
-    if os.name == 'nt':
-        return ''
-    if sys.platform == 'darwin':
-        return ''
-    paths = [x for x in os.environ['PATH'].split(':')
-            if os.path.isdir(x)]
-    for dir in paths:
-        for prog in progs:
-            val = os.path.join(dir, prog)
-            if os.path.isfile(val) or os.path.islink(val):
-                return val + ' ' + args
-    return ''
 
 
 class ConfigManager(object):
@@ -61,11 +49,7 @@ class ConfigManager(object):
             'login.expanded': False,
             'tip.autostart': False,
             'tip.position': 0,
-            'logging.logger': '',
-            'logging.level': 'ERROR',
-            'logging.default': 'ERROR',
             'form.toolbar': True,
-            'form.statusbar': True,
             'client.default_width': 900,
             'client.default_height': 750,
             'client.modepda': False,
@@ -73,28 +57,18 @@ class ConfigManager(object):
             'client.form_tab': form_tab,
             'client.maximize': False,
             'client.save_width_height': True,
-            'client.save_tree_expanded_state': True,
+            'client.save_tree_state': True,
             'client.spellcheck': False,
             'client.default_path': get_home_dir(),
             'client.lang': locale.getdefaultlocale()[0],
             'client.language_direction': 'ltr',
-            'client.actions': {
-                'odt': {0: find_path(['ooffice', 'ooffice2', 'libreoffice'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2', 'libreoffice'], '-p "%s"')},
-                'txt': {0: find_path(['ooffice', 'ooffice2', 'libreoffice'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2', 'libreoffice'], '-p "%s"')},
-                'pdf': {0: find_path(['evince', 'xpdf', 'gpdf',
-                    'kpdf', 'epdfview', 'acroread'], '"%s"'), 1: ''},
-                'png': {0: find_path(['feh', 'display', 'qiv', 'eye'], '"%s"'), 1: ''},
-                'csv': {0: find_path(['ooffice', 'ooffice2', 'libreoffice'], '"%s"'),
-                    1: find_path(['ooffice', 'ooffice2', 'libreoffice'], '-p "%s"')},
-                },
             'client.email': '',
             'client.can_change_accelerators': False,
             'client.limit': 1000,
             'roundup.url': 'http://bugs.tryton.org/roundup/',
             'roundup.xmlrpc': 'roundup-xmlrpc.tryton.org',
             'menu.pane': 200,
+            'menu.expanded': True,
         }
         self.config = {}
         self.options = {
@@ -107,14 +81,15 @@ class ConfigManager(object):
                 usage="Usage: %prog [options] [url]")
         parser.add_option("-c", "--config", dest="config",
                 help=_("specify alternate config file"))
+        parser.add_option("-d", "--dev", action="store_true",
+                default=False, dest="dev",
+                help=_("development mode"))
         parser.add_option("-v", "--verbose", action="store_true",
                 default=False, dest="verbose",
                 help=_("logging everything at INFO level"))
-        parser.add_option("-d", "--log", dest="log_logger", default='',
-                help=_("specify channels to log"))
         parser.add_option("-l", "--log-level", dest="log_level",
-                help=_("specify the log level: " \
-                        "INFO, DEBUG, WARNING, ERROR, CRITICAL"))
+                help=_("specify the log level: "
+                "DEBUG, INFO, WARNING, ERROR, CRITICAL"))
         parser.add_option("-u", "--user", dest="login",
                 help=_("specify the login user"))
         parser.add_option("-p", "--port", dest="port",
@@ -128,18 +103,29 @@ class ConfigManager(object):
 
         if opt.config and not os.path.isfile(opt.config):
             raise TrytonError(_('File "%s" not found') % (opt.config,))
-        self.rcfile = opt.config or os.path.join(get_config_dir(), 'tryton.conf')
+        self.rcfile = opt.config or os.path.join(
+            get_config_dir(), 'tryton.conf')
         self.load()
 
-        for arg in ('log_level', 'log_logger'):
-            if getattr(opt, arg):
-                self.options['logging.'+arg[4:]] = getattr(opt, arg)
-        if opt.verbose:
-            self.options['logging.default'] = 'INFO'
+        self.options['dev'] = opt.dev
+        logging.basicConfig()
+        loglevels = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL,
+            }
+        if not opt.log_level:
+            if opt.verbose:
+                opt.log_level = 'INFO'
+            else:
+                opt.log_level = 'ERROR'
+        logging.getLogger().setLevel(loglevels[opt.log_level.upper()])
 
         for arg in ('login', 'port', 'server'):
             if getattr(opt, arg):
-                self.options['login.'+arg] = getattr(opt, arg)
+                self.options['login.' + arg] = getattr(opt, arg)
 
     def save(self):
         try:
@@ -153,9 +139,9 @@ class ConfigManager(object):
                 configparser.set(section, name, self.config[entry])
             configparser.write(open(self.rcfile, 'wb'))
         except IOError:
-            logging.getLogger('common.options').warn(
-                    _('Unable to write config file %s!') % \
-                            (self.rcfile,))
+            logging.getLogger(__name__).warn(
+                _('Unable to write config file %s!')
+                % (self.rcfile,))
             return False
         return True
 
@@ -169,7 +155,9 @@ class ConfigManager(object):
                 elif value.lower() == 'false':
                     value = False
                 if section == 'client' and name == 'limit':
-                    value = float(value)
+                    # First convert to float to be backward compatible with old
+                    # configuration
+                    value = int(float(value))
                 self.config[section + '.' + name] = value
         return True
 
@@ -191,22 +179,17 @@ else:
     CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
         unicode(os.path.dirname(__file__), sys.getfilesystemencoding()),
         '..')))
-PREFIX = os.path.abspath(os.path.normpath(os.path.join(
-    os.path.dirname(sys.argv[0]), '..')))
 PIXMAPS_DIR = os.path.join(CURRENT_DIR, 'share', 'pixmaps', 'tryton')
 if not os.path.isdir(PIXMAPS_DIR):
-    PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
-    if not os.path.isdir(PIXMAPS_DIR):
-        PREFIX = os.path.abspath(os.path.normpath(
-            os.path.dirname(sys.argv[0])))
-        PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
+    PIXMAPS_DIR = os.path.join(sys.prefix, 'share', 'pixmaps', 'tryton')
 
 TRYTON_ICON = gtk.gdk.pixbuf_new_from_file(
         os.path.join(PIXMAPS_DIR, 'tryton-icon.png').encode('utf-8'))
 
+
 def _data_dir():
     data_dir = os.path.join(CURRENT_DIR, 'share', 'tryton')
     if not os.path.isdir(data_dir):
-        data_dir = os.path.join(PREFIX, 'share', 'tryton')
+        data_dir = os.path.join(sys.prefix, 'share', 'tryton')
     return data_dir
 DATA_DIR = _data_dir()

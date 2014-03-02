@@ -15,9 +15,9 @@ class Limit(object):
     def __init__(self):
         self.parent = get_toplevel_window()
         self.win = gtk.Dialog(_('Limit'), self.parent,
-                gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT,
-                (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
-                    gtk.STOCK_OK, gtk.RESPONSE_OK))
+            gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT,
+            (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL, gtk.STOCK_OK,
+                gtk.RESPONSE_OK))
         self.win.set_default_response(gtk.RESPONSE_OK)
         self.win.set_icon(TRYTON_ICON)
         self.win.set_has_separator(True)
@@ -27,10 +27,11 @@ class Limit(object):
         self.win.vbox.pack_start(gtk.HSeparator())
         hbox = gtk.HBox(spacing=3)
         hbox.pack_start(gtk.Label(_('Limit:')), expand=True, fill=True)
-        self.spin_limit = gtk.SpinButton(climb_rate=1, digits=0)
+        adjustment = gtk.Adjustment(value=CONFIG['client.limit'],
+            lower=1, upper=sys.maxint, step_incr=10, page_incr=100)
+        self.spin_limit = gtk.SpinButton(adjustment, climb_rate=1, digits=0)
         self.spin_limit.set_numeric(False)
-        self.spin_limit.set_adjustment(gtk.Adjustment(value=CONFIG['client.limit'],
-            lower=1, upper=sys.maxint, step_incr=10, page_incr=100))
+        self.spin_limit.set_activates_default(True)
         hbox.pack_start(self.spin_limit, expand=True, fill=True)
         self.win.vbox.pack_start(hbox, expand=True, fill=True)
 
@@ -40,7 +41,7 @@ class Limit(object):
         'Run the window'
         res = self.win.run()
         if res == gtk.RESPONSE_OK:
-            CONFIG['client.limit'] = self.spin_limit.get_value()
+            CONFIG['client.limit'] = self.spin_limit.get_value_as_int()
             CONFIG.save()
         self.parent.present()
         self.win.destroy()
