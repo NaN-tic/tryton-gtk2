@@ -4,6 +4,8 @@ import gtk
 import gobject
 import pango
 
+from tryton.common.selection import selection_shortcuts
+
 
 class CellRendererCombo(gtk.GenericCellRenderer):
     __gproperties__ = {
@@ -29,6 +31,8 @@ class CellRendererCombo(gtk.GenericCellRenderer):
                 gobject.PARAM_READWRITE),
             'text-column': (gobject.TYPE_INT, 'Text Column',
                 'Text Column', 0, 10, 0, gobject.PARAM_READWRITE),
+            'strikethrough': (gobject.TYPE_BOOLEAN, 'Strikethrough',
+                'Strikethrough', False, gobject.PARAM_WRITABLE),
     }
 
     def __init__(self):
@@ -39,6 +43,11 @@ class CellRendererCombo(gtk.GenericCellRenderer):
         self.text = self._renderer.get_property('text')
         self.editable = self._renderer.get_property('editable')
         self.visible = True
+
+    def set_sensitive(self, value):
+        if hasattr(self._renderer, 'set_sensitive'):
+            return self._renderer.set_sensitive(value)
+        return self._renderer.set_property('sensitive', value)
 
     def do_set_property(self, pspec, value):
         setattr(self, pspec.name, value)
@@ -99,10 +108,13 @@ class CellRendererCombo(gtk.GenericCellRenderer):
             editable.modify_text(gtk.STATE_INSENSITIVE, fg_color)
         else:
             editable.modify_bg(gtk.STATE_ACTIVE, style.bg[gtk.STATE_ACTIVE])
-            editable.modify_base(gtk.STATE_NORMAL, style.base[gtk.STATE_NORMAL])
+            editable.modify_base(gtk.STATE_NORMAL,
+                style.base[gtk.STATE_NORMAL])
             editable.modify_fg(gtk.STATE_NORMAL, style.fg[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_NORMAL, style.text[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_INSENSITIVE, style.text[gtk.STATE_INSENSITIVE])
-        return editable
+            editable.modify_text(gtk.STATE_NORMAL,
+                style.text[gtk.STATE_NORMAL])
+            editable.modify_text(gtk.STATE_INSENSITIVE,
+                style.text[gtk.STATE_INSENSITIVE])
+        return selection_shortcuts(editable)
 
 gobject.type_register(CellRendererCombo)

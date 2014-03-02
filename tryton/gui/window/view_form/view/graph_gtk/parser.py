@@ -3,12 +3,12 @@
 from tryton.gui.window.view_form.view.interface import ParserInterface
 import tryton.common as common
 import gtk
-from graph import Graph
 from bar import VerticalBar, HorizontalBar
 from line import Line
 from pie import Pie
 from tryton.config import TRYTON_ICON, CONFIG
-import sys, os
+import sys
+import os
 import gettext
 
 _ = gettext.gettext
@@ -20,11 +20,12 @@ GRAPH_TYPE = {
     'pie': Pie,
 }
 
-def save(widget, graph, window):
-    dia = gtk.Dialog(_('Save As'), window,
-            gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT,
-            (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
-                gtk.STOCK_OK, gtk.RESPONSE_OK))
+
+def save(widget, graph):
+    parent = common.get_toplevel_window()
+    dia = gtk.Dialog(_('Save As'), parent,
+        gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT,
+        (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL, gtk.STOCK_OK, gtk.RESPONSE_OK))
     dia.set_icon(TRYTON_ICON)
     dia.set_has_separator(True)
     dia.set_default_response(gtk.RESPONSE_OK)
@@ -77,9 +78,9 @@ def save(widget, graph, window):
             filename = filename.decode('utf-8')
             try:
                 CONFIG['client.default_path'] = \
-                       os.path.dirname(filename)
+                    os.path.dirname(filename)
                 CONFIG.save()
-            except:
+            except IOError:
                 pass
         if response == gtk.RESPONSE_OK:
             if width and height and filename:
@@ -93,24 +94,25 @@ def save(widget, graph, window):
                             gtk.MESSAGE_ERROR)
         else:
             break
-    window.present()
+    parent.present()
     dia.destroy()
     return
 
-def button_press(widget, event, graph, window):
+
+def button_press(widget, event, graph):
     if event.button == 3:
         menu = gtk.Menu()
         item = gtk.ImageMenuItem(_('Save As...'))
         img = gtk.Image()
         img.set_from_stock('tryton-save-as', gtk.ICON_SIZE_MENU)
         item.set_image(img)
-        item.connect('activate', save, graph, window)
+        item.connect('activate', save, graph)
         item.show()
         menu.append(item)
         menu.popup(None, None, None, event.button, event.time)
         return True
     elif event.button == 1:
-        graph.action(window)
+        graph.action()
 
 
 class ParserGraph(ParserInterface):
@@ -131,7 +133,8 @@ class ParserGraph(ParserInterface):
                         continue
                     xfield = common.node_attributes(child)
                     if not xfield.get('string'):
-                        xfield['string'] = fields[xfield['name']]['string']
+                        xfield['string'] = fields[xfield['name']
+                            ].attrs['string']
                     break
             elif node.localName == 'y':
                 for child in node.childNodes:
@@ -139,12 +142,14 @@ class ParserGraph(ParserInterface):
                         continue
                     yattrs = common.node_attributes(child)
                     if not yattrs.get('string') and yattrs['name'] != '#':
-                        yattrs['string'] = fields[yattrs['name']]['string']
+                        yattrs['string'] = fields[yattrs['name']
+                            ].attrs['string']
                     yfields.append(yattrs)
 
-        widget = GRAPH_TYPE[attrs.get('type', 'vbar')](xfield, yfields, attrs, model)
+        widget = GRAPH_TYPE[attrs.get('type', 'vbar')
+            ](xfield, yfields, attrs, model)
         event = gtk.EventBox()
         event.add(widget)
-        event.connect('button-press-event', button_press, widget, self.window)
+        event.connect('button-press-event', button_press, widget)
 
         return event, {'root': widget}, [], '', [], None
