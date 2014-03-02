@@ -35,11 +35,12 @@ Options
 
 -c FILE, --config=FILE               Specify alternate `configuration file`_
 
+-d, --dev                            Enable development mode, which deactivates
+                                     client side caching
+
 -v, --verbose                        Enable basic debugging
 
--d LOG_LOGGER, --log=LOG_LOGGER      Specify channels to log (ex: rpc.request, rpc.result, ...)
-
--l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: INFO, DEBUG,
+-l LOG_LEVEL, --log-level=LOG_LEVEL  Specify the log level: DEBUG, INFO,
                                      WARNING, ERROR, CRITICAL
 
 -u LOGIN, --user=LOGIN               Specify the login user
@@ -83,7 +84,7 @@ Figure: Tryton client application::
   Client Window       ________________________________________________________________
                      |                      Tryton                               _ o x|
                      |----------------------------------------------------------------|
-  Menu bar           | File User Options Plugins Shortcuts Help                       |
+  Menu bar           | File User Options Favorites Help                               |
                      |________________________________________________________________|
                      |             |          ______                                  |
   Tabs               | Menu        |  [Tab1] |[Tab2]| [Tab3]...                       |
@@ -92,8 +93,8 @@ Figure: Tryton client application::
                      | |-+         | |-----------------------------------------------||
   Tool bar           | | |-        | | New Save Switch Reload | Prev Next | Attach v ||
                      | | |-        | |-----------------------------------------------||
-                     | +           | |        ____________________                   ||
-  Search widget      | |-+         | | Search |                   | <- -> Find Clear ||
+                     | +           | |        _______________________                ||
+  Search widget      | |-+         | | Filter |                    *| Bookmark <- -> ||
                      | | |-        | |-----------------------------------------------||
                      | | |-        | |                                               ||
                      | +           | |                                               ||
@@ -104,10 +105,8 @@ Figure: Tryton client application::
                      |             | |                                               ||
                      |             | |                                               ||
                      |             | |                                               ||
-                     |             | |                                               ||
-                     |_____________| |_______________________________________________||
-                     |________________________________________________________________|
-  Status bar         |username company           Waiting requests...         login@...|
+                     |             | |______________________________________________ ||
+  URL                |_____________| |tryton://______________________________________||
                      |________________________________________________________________|
 
 
@@ -187,30 +186,6 @@ usually an item of the `Menu`_ opening when the user calls his
 __ Menu-User-Home_
 
 __ Menu-User-Preferences_
-
-
-Status bar
-++++++++++
-The status bar provides general informations of the state of the
-Tryton client. It is divided in three parts.
-
-* On its left side the real name and company name of the users actual company
-  is shown.
-* In the center of the status bar the number of waiting requests for the
-  actual user are displayed.
-* On its right side are details of the server connection shown including
-  database and user informations if connected. It is also noted there, if
-  there is no connection to a Tryton server at all. The right side information
-  of the status bar is build with the following pattern::
-
-    <user-name>@<tryton-server-address>:<port>/<database-name>
-
-  If the client is connected to the server with an SSL-secured connection, an
-  additional lock icon appears rightmost some certificate details in a mouse
-  hover popup.
-
-The Status bar can be enabled and disabled in the menu at
-Options > Form > Status bar
 
 
 Menu Bar Items
@@ -395,8 +370,7 @@ Server (connection) dialog:
 
 User
 ^^^^
-This menu bar item controls the preferences of the actual user and connects
-to the *request system* in Tryton.
+This menu bar item controls the preferences of the actual user.
 
 .. _Menu-User-Preferences:
 
@@ -431,64 +405,6 @@ Menu Toggle:
 
 Home:
   Opens a new `Home`__ tab.
-
-.. _Menu-User-send-a-request:
-
-Send a Request
-  Opens a tab in :term:`form view` which enables the user to send
-  requests to other users of the same database.
-
-.. _Menu-User-read-my-request:
-
-Read my Requests
-  Opens a tab in :term:`tree view` showing all requests related to the
-  actual user. Fields and actions of requests:
-
-  * On top
-
-    - From: User name of the sender
-    - To: User name of the request recipient
-    - References: Count of the attached references
-    - Subject: The subject of the request.
-    - Priority: An importance priority of the request.
-
-      + High
-      + Low
-      + Normal
-
-  * *Request* tab
-
-    - Body: The textual part of the request.
-    - History: The history of past replies to this request.
-
-      + From: Sender of the past request
-      + To: Receiver of the past request
-      + Summary: Summary of the body text of the past request.
-
-  * Trigger Date: Defines time and date when the request will be sent
-    automatically.
-  * State: State of the request. Possible states for the request are:
-
-    - Draft: The request is saved in the system, but not posted.
-    - Waiting: The request is sent without receiving a reply message.
-    - Chatting: The message is replied or in discussion.
-    - Closed: The message is closed/fulfilled/answered.
-
-  * Actions:
-
-    - Send: Sends the actual message
-    - Reply: Replies or answers the actual message
-    - close: Closes the actual message
-
-  * *References* tab
-
-    - References
-
-      + Reference: The reference type
-      + (Target): Defines an reference attached to the request.
-
-.. note:: When talking about requests, think of an internal system of
-   Tryton, which is very similar to email.
 
 
 Options
@@ -538,8 +454,7 @@ Normal:
 .. _Menu-Options-Mode_PDA:
 
 PDA:
-  Shows the client in a condensed mode. The PDA (Personal Data Assistant) mode
-  hides the shortcut menu in tree views and the system status bar.
+  Shows the client in a condensed mode.
 
 Form
 ++++
@@ -548,11 +463,6 @@ Form
 
 Toolbar:
   Checkbox to disable/enable the tool bar.
-
-.. _Menu-Options-Form-Statusbar:
-
-Statusbar:
-  Checkbox to disable/enable the status bar.
 
 .. _Menu-Options-Form-Save_Columns_Width:
 
@@ -611,27 +521,9 @@ Save Options:
   Saves all the options.
 
 
-Plug-ins
-^^^^^^^^
-Plug-ins are client side add-ons for Tryton. There are some included plug-ins
-with the standard client.
-
-Execute a Plug-in
-+++++++++++++++++
-Translate View:
-  Creates a translation table of the current view.
-
-Print Workflow:
-  Creates a graph which shows the work flow of the current view.
-
-Print Workflow (complex):
-  Like 'Print Workflow', with additional sub work flows inherited by the
-  current view.
-
-
-Shortcuts
+Favorites
 ^^^^^^^^^
-A collection of user defined shortcuts for specific resources.
+A collection of user defined menu favorites.
 
 
 Help
@@ -825,6 +717,21 @@ Widgets
 There are a several widgets used on Tryton in client side. The follow sections
 will explains some of them.
 
+
+Date/DateTime/Time Widgets
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Those widgets has several key shortucts to quickly modify the value. Each key
+increases if lower case or decreases if upper case:
+
+    - `y`: by one year
+    - `m`: by one month
+    - `w`: by one week
+    - `d`: by one day
+    - `h`: by one hour
+    - `i`: by one minute
+    - `s`: by one second
+
 Search Widget
 ^^^^^^^^^^^^^
 
@@ -932,14 +839,14 @@ text formatting. The features are:
   * Underline: On/off style of underline text
   * Choose font family: Choice from a combo box the desired font family
   * Choose font size: Choice from a combo box the desired size font
-  * Text justify: Choice between four options for alignment of the line (left, 
+  * Text justify: Choice between four options for alignment of the line (left,
     right, center, fill)
   * Background color: Choose the background color of text from a color palette
   * Foreground color: Choose the foreground color of text from a color palette
 
-Besides these features, it can change and edit text markup. The text markup 
-feature has a similar HTML tags and is used to describe the format specified by 
-the user and is a way of storing this format for future opening of a correct 
+Besides these features, it can change and edit text markup. The text markup
+feature has a similar HTML tags and is used to describe the format specified by
+the user and is a way of storing this format for future opening of a correct
 formatted text. The tags are explain follows:
 
   * Bold: Tag `b` is used, i.e. <b>text</b>

@@ -56,13 +56,15 @@ def all_languages():
         yield lang.split('_')[0]
 
 data_files = [
-    ('share/pixmaps/tryton', glob.glob('share/pixmaps/tryton/*.png') + \
+    ('share/pixmaps/tryton', glob.glob('share/pixmaps/tryton/*.png') +
         glob.glob('share/pixmaps/tryton/*.svg')),
+    ('share/locale', ['share/locale/tryton.pot']),
     ]
 for lang in languages:
     data_files += [
         ('share/locale/%s/LC_MESSAGES' % lang,
-            glob.glob('share/locale/%s/LC_MESSAGES/*.mo' % lang)),
+            glob.glob('share/locale/%s/LC_MESSAGES/*.mo' % lang) +
+            glob.glob('share/locale/%s/LC_MESSAGES/*.po' % lang)),
         ]
 
 if os.name == 'nt':
@@ -103,8 +105,8 @@ elif sys.platform == 'darwin':
     args['options'] = {
         'py2app': {
             'argv_emulation': True,
-            'includes': 'pygtk, gtk, glib, cairo, pango, pangocairo, atk, ' \
-                    'gobject, gio, gtk.keysyms',
+            'includes': ('pygtk, gtk, glib, cairo, pango, pangocairo, atk, '
+                'gobject, gio, gtk.keysyms'),
             'resources': 'tryton/plugins',
             'frameworks': 'librsvg-2.2.dylib',
             'plist': {
@@ -118,19 +120,14 @@ elif sys.platform == 'darwin':
 
 execfile(os.path.join('tryton', 'version.py'))
 
-WEAKREF = []
-if sys.version_info < (2, 7):
-    WEAKREF = ['weakrefset']
-
 dist = setup(name=PACKAGE,
     version=VERSION,
     description='Tryton client',
     long_description=read('README'),
-    author='B2CK',
-    author_email='info@b2ck.com',
+    author='Tryton',
     url=WEBSITE,
-    download_url="http://downloads.tryton.org/" + \
-            VERSION.rsplit('.', 1)[0] + '/',
+    download_url=("http://downloads.tryton.org/" +
+        VERSION.rsplit('.', 1)[0] + '/'),
     packages=find_packages(),
     data_files=data_files,
     scripts=['bin/tryton'],
@@ -153,22 +150,21 @@ dist = setup(name=PACKAGE,
         'Natural Language :: Slovenian',
         'Natural Language :: Japanese',
         'Operating System :: OS Independent',
-        'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
         'Topic :: Office/Business',
-    ],
+        ],
     license=LICENSE,
     install_requires=[
-#        "pygtk >= 2.6",
+        #"pygtk >= 2.6",
         "python-dateutil",
-    ] + WEAKREF,
+        ],
     extras_require={
-        'timezone': ['pytz'],
         'simplejson': ['simplejson'],
         'cdecimal': ['cdecimal'],
-    },
+        'calendar': ['GooCalendar'],
+        },
     **args
-)
+    )
 
 if os.name == 'nt':
     def find_gtk_dir():
@@ -181,7 +177,8 @@ if os.name == 'nt':
         return None
 
     def find_makensis():
-        for directory in os.environ['PATH'].split(';'):
+        default_path = os.path.join(os.environ['PROGRAMFILES'], 'NSIS')
+        for directory in os.environ['PATH'].split(';') + [default_path]:
             if not os.path.isdir(directory):
                 continue
             path = os.path.join(directory, 'makensis.exe')
@@ -272,6 +269,9 @@ if os.name == 'nt':
             Popen([makensis, "/DVERSION=" + VERSION,
                 str(os.path.join(os.path.dirname(__file__),
                     'setup-single.nsi'))]).wait()
+        else:
+            print "makensis.exe not found: installers can not be created, "\
+                "skip setup.nsi and setup-single.nsi"
 elif sys.platform == 'darwin':
 
     def find_gtk_dir():
@@ -385,15 +385,15 @@ elif sys.platform == 'darwin':
                         'immodules', '*.so')),
                 iglob(os.path.join(pango_dist_dir, '*', 'modules', '*.so'))):
             libs = [lib.split('(')[0].strip()
-                    for lib in Popen(['otool', '-L', library],
-                            stdout=PIPE).communicate()[0].splitlines()
-                    if 'compatibility' in lib]
+                for lib in Popen(['otool', '-L', library],
+                    stdout=PIPE).communicate()[0].splitlines()
+                if 'compatibility' in lib]
             libs = dict(((lib, None) for lib in libs if gtk_dir in lib))
             for lib in libs.keys():
                 fixed = lib.replace(gtk_dir + '/lib',
-                        '@executable_path/../Frameworks')
+                    '@executable_path/../Frameworks')
                 Popen(['install_name_tool', '-change', lib, fixed,
-                    library]).wait()
+                        library]).wait()
 
         for file in ('CHANGELOG', 'COPYRIGHT', 'LICENSE', 'README', 'TODO'):
             shutil.copyfile(os.path.join(os.path.dirname(__file__), file),
@@ -409,5 +409,5 @@ elif sys.platform == 'darwin':
                 + '.dmg')
         if os.path.isfile(dmg_file):
             os.remove(dmg_file)
-        Popen(['hdiutil', 'create', dmg_file, '-volname', 'Tryton Client ' +
-            VERSION, '-fs', 'HFS+', '-srcfolder', dist_dir]).wait()
+        Popen(['hdiutil', 'create', dmg_file, '-volname', 'Tryton Client '
+                + VERSION, '-fs', 'HFS+', '-srcfolder', dist_dir]).wait()

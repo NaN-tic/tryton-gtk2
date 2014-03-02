@@ -13,11 +13,13 @@ import socket
 import gzip
 import StringIO
 import hashlib
-import sys
 import base64
+import threading
+from functools import partial
+from contextlib import contextmanager
 
 __all__ = ["ResponseError", "Fault", "ProtocolError", "Transport",
-    "ServerProxy"]
+    "ServerProxy", "ServerPool"]
 CONNECT_TIMEOUT = 5
 DEFAULT_TIMEOUT = None
 
@@ -37,6 +39,7 @@ class Fault(xmlrpclib.Fault):
             "<Fault %s: %s>" %
             (repr(self.faultCode), repr(self.faultString))
             )
+
 
 class ProtocolError(xmlrpclib.ProtocolError):
     pass
@@ -184,6 +187,8 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
             self._connection = host, httplib.HTTPConnection(host,
                 timeout=CONNECT_TIMEOUT)
             self._connection[1].connect()
+            sock = self._connection[1].sock
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         def https_connection():
             self._connection = host, HTTPSConnection(host,
@@ -191,6 +196,7 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
             try:
                 self._connection[1].connect()
                 sock = self._connection[1].sock
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 try:
                     peercert = sock.getpeercert(True)
                 except socket.error:
@@ -223,52 +229,6 @@ class Transport(xmlrpclib.Transport, xmlrpclib.SafeTransport):
         self._connection[1].timeout = DEFAULT_TIMEOUT
         self._connection[1].sock.settimeout(DEFAULT_TIMEOUT)
         return self._connection[1]
-
-    if sys.version_info[:2] <= (2, 6):
-
-        def request(self, host, handler, request_body, verbose=0):
-            h = self.make_connection(host)
-            if verbose:
-                h.set_debuglevel(1)
-
-            self.send_request(h, handler, request_body)
-            self.send_host(h, host)
-            self.send_user_agent(h)
-            self.send_content(h, request_body)
-
-            response = h.getresponse()
-
-            if response.status != 200:
-                raise ProtocolError(
-                    host + handler,
-                    response.status,
-                    response.reason,
-                    response.getheaders()
-                    )
-
-            self.verbose = verbose
-
-            try:
-                sock = h._conn.sock
-            except AttributeError:
-                sock = None
-
-            if response.getheader("Content-Encoding", "") == "gzip":
-                response = gzip.GzipFile(mode="rb",
-                    fileobj=StringIO.StringIO(response.read()))
-                sock = None
-
-            return self._parse_response(response, sock)
-
-        def send_request(self, connection, handler, request_body):
-            xmlrpclib.Transport.send_request(self, connection, handler,
-                request_body)
-            connection.putheader("Accept-Encoding", "gzip")
-
-        def close(self):
-            if self._connection[1]:
-                self._connection[1].close()
-                self._connection = (None, None)
 
 
 class ServerProxy(xmlrpclib.ServerProxy):
@@ -327,3 +287,43 @@ class ServerProxy(xmlrpclib.ServerProxy):
     def ssl(self):
         return isinstance(self.__transport.make_connection(self.__host),
             httplib.HTTPSConnection)
+
+
+class ServerPool(object):
+
+    def __init__(self, *args, **kwargs):
+        self.ServerProxy = partial(ServerProxy, *args, **kwargs)
+        self._lock = threading.Lock()
+        self._pool = []
+        self._used = {}
+
+    def getconn(self):
+        with self._lock:
+            if self._pool:
+                conn = self._pool.pop()
+            else:
+                conn = self.ServerProxy()
+            self._used[id(conn)] = conn
+            return conn
+
+    def putconn(self, conn):
+        with self._lock:
+            self._pool.append(conn)
+            del self._used[id(conn)]
+
+    def close(self):
+        with self._lock:
+            for conn in self._pool + self._used.values():
+                conn.close()
+
+    @property
+    def ssl(self):
+        for conn in self._pool + self._used.values():
+            return conn.ssl
+        return False
+
+    @contextmanager
+    def __call__(self):
+        conn = self.getconn()
+        yield conn
+        self.putconn(conn)

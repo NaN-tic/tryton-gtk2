@@ -49,11 +49,7 @@ class ConfigManager(object):
             'login.expanded': False,
             'tip.autostart': False,
             'tip.position': 0,
-            'logging.logger': '',
-            'logging.level': 'ERROR',
-            'logging.default': 'ERROR',
             'form.toolbar': True,
-            'form.statusbar': True,
             'client.default_width': 900,
             'client.default_height': 750,
             'client.modepda': False,
@@ -61,7 +57,7 @@ class ConfigManager(object):
             'client.form_tab': form_tab,
             'client.maximize': False,
             'client.save_width_height': True,
-            'client.save_tree_expanded_state': True,
+            'client.save_tree_state': True,
             'client.spellcheck': False,
             'client.default_path': get_home_dir(),
             'client.lang': locale.getdefaultlocale()[0],
@@ -72,6 +68,7 @@ class ConfigManager(object):
             'roundup.url': 'http://bugs.tryton.org/roundup/',
             'roundup.xmlrpc': 'roundup-xmlrpc.tryton.org',
             'menu.pane': 200,
+            'menu.expanded': True,
         }
         self.config = {}
         self.options = {
@@ -84,14 +81,15 @@ class ConfigManager(object):
                 usage="Usage: %prog [options] [url]")
         parser.add_option("-c", "--config", dest="config",
                 help=_("specify alternate config file"))
+        parser.add_option("-d", "--dev", action="store_true",
+                default=False, dest="dev",
+                help=_("development mode"))
         parser.add_option("-v", "--verbose", action="store_true",
                 default=False, dest="verbose",
                 help=_("logging everything at INFO level"))
-        parser.add_option("-d", "--log", dest="log_logger", default='',
-                help=_("specify channels to log"))
         parser.add_option("-l", "--log-level", dest="log_level",
-                help=_("specify the log level: " \
-                        "INFO, DEBUG, WARNING, ERROR, CRITICAL"))
+                help=_("specify the log level: "
+                "DEBUG, INFO, WARNING, ERROR, CRITICAL"))
         parser.add_option("-u", "--user", dest="login",
                 help=_("specify the login user"))
         parser.add_option("-p", "--port", dest="port",
@@ -109,11 +107,21 @@ class ConfigManager(object):
             get_config_dir(), 'tryton.conf')
         self.load()
 
-        for arg in ('log_level', 'log_logger'):
-            if getattr(opt, arg):
-                self.options['logging.' + arg[4:]] = getattr(opt, arg)
-        if opt.verbose:
-            self.options['logging.default'] = 'INFO'
+        self.options['dev'] = opt.dev
+        logging.basicConfig()
+        loglevels = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL,
+            }
+        if not opt.log_level:
+            if opt.verbose:
+                opt.log_level = 'INFO'
+            else:
+                opt.log_level = 'ERROR'
+        logging.getLogger().setLevel(loglevels[opt.log_level.upper()])
 
         for arg in ('login', 'port', 'server'):
             if getattr(opt, arg):
@@ -131,9 +139,9 @@ class ConfigManager(object):
                 configparser.set(section, name, self.config[entry])
             configparser.write(open(self.rcfile, 'wb'))
         except IOError:
-            logging.getLogger('common.options').warn(
-                    _('Unable to write config file %s!') % \
-                            (self.rcfile,))
+            logging.getLogger(__name__).warn(
+                _('Unable to write config file %s!')
+                % (self.rcfile,))
             return False
         return True
 
@@ -147,7 +155,9 @@ class ConfigManager(object):
                 elif value.lower() == 'false':
                     value = False
                 if section == 'client' and name == 'limit':
-                    value = float(value)
+                    # First convert to float to be backward compatible with old
+                    # configuration
+                    value = int(float(value))
                 self.config[section + '.' + name] = value
         return True
 
@@ -169,15 +179,9 @@ else:
     CURRENT_DIR = os.path.abspath(os.path.normpath(os.path.join(
         unicode(os.path.dirname(__file__), sys.getfilesystemencoding()),
         '..')))
-PREFIX = os.path.abspath(os.path.normpath(os.path.join(
-    os.path.dirname(sys.argv[0]), '..')))
 PIXMAPS_DIR = os.path.join(CURRENT_DIR, 'share', 'pixmaps', 'tryton')
 if not os.path.isdir(PIXMAPS_DIR):
-    PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
-    if not os.path.isdir(PIXMAPS_DIR):
-        PREFIX = os.path.abspath(os.path.normpath(
-            os.path.dirname(sys.argv[0])))
-        PIXMAPS_DIR = os.path.join(PREFIX, 'share', 'pixmaps', 'tryton')
+    PIXMAPS_DIR = os.path.join(sys.prefix, 'share', 'pixmaps', 'tryton')
 
 TRYTON_ICON = gtk.gdk.pixbuf_new_from_file(
         os.path.join(PIXMAPS_DIR, 'tryton-icon.png').encode('utf-8'))
@@ -186,6 +190,6 @@ TRYTON_ICON = gtk.gdk.pixbuf_new_from_file(
 def _data_dir():
     data_dir = os.path.join(CURRENT_DIR, 'share', 'tryton')
     if not os.path.isdir(data_dir):
-        data_dir = os.path.join(PREFIX, 'share', 'tryton')
+        data_dir = os.path.join(sys.prefix, 'share', 'tryton')
     return data_dir
 DATA_DIR = _data_dir()

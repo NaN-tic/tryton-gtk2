@@ -1,33 +1,59 @@
-Version 2.4.10 - 2013-12-04
-* Bug fixes (see mercurial logs for details)
-
-Version 2.4.9 - 2013-11-03
-* Bug fixes (see mercurial logs for details)
+* Add Len to PYSON
+* Use a pool of connection
+* Manage client actions from button and wizard
+* Add tree_invisible attribute to button in tree view
+* Add buttons of the view in actions menu
+* Don't evaluate anymore relate action with the record
+* Paste on editable list create new records if needed
+* Drop support of Python 2.6
+* Allow to search on rec_name of Reference fields
+* Use local timezone
 * Sanitize report file extension
 
-Version 2.4.8 - 2013-10-10
+Version 3.0.0 - 2013-10-21
 * Bug fixes (see mercurial logs for details)
+* Add factor on number widgets
+* Add calendar view
+* Add URL entry
+* Remove request
 
-Version 2.4.7 - 2013-07-22
+Version 2.8.0 - 2013-04-22
 * Bug fixes (see mercurial logs for details)
+* Manage dynamic label
+* Manage prefix, suffix on tree view
+* Manage selection_change_with on Selection and Reference fields
+* Add Dict fields on form
+* Remove Goto
+* Add global search
+* Add toggle button for menu
+* Replace shortcuts by menu favorites
+* Move Plugins into toolbar Actions
+* Add url to list view
+* Add dynamic icon for url
+* Add completion on Many2One, Many2Many and One2Many
+* Add bookmark on search widget
+* Manage domains on Action Window
+* Use range for Date/Time fields in filter box
+* Allow multi-selection for Selection field in filter box
 
-Version 2.4.6 - 2013-06-09
+Version 2.6.0 - 2012-10-22
 * Bug fixes (see mercurial logs for details)
-
-Version 2.4.5 - 2013-05-02
-* Bug fixes (see mercurial logs for details)
-
-Version 2.4.4 - 2013-02-12
-* Bug fixes (see mercurial logs for details)
-
-Version 2.4.3 - 2012-12-23
-* Bug fixes (see mercurial logs for details)
-
-Version 2.4.2 - 2012-11-05
-* Bug fixes (see mercurial logs for details)
-
-Version 2.4.1 - 2012-09-01
-* Bug fixes (see mercurial logs for details)
+* Allow to paste in editable list view
+* Manage readonly state on group
+* Remove "Please wait" box
+* Refactorize date widgets
+* Manage tuple on Reference
+* Add constant interpolation on line graph
+* Make Import/Export Data no-modal
+* Deactivate switch view button when there is only 1 view
+* Manage create/delete field access
+* Add dynamic size limit on the One2Many, Many2Many and Char
+* Search only on fields in XML view
+* Cache action keyword
+* Always use cached views
+* Manage model access
+* Manage time format
+* Deactivate attachment button when record is not created
 
 Version 2.4.0 - 2012-04-23
 * Bug fixes (see mercurial logs for details)

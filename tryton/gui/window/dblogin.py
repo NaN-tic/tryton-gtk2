@@ -299,13 +299,11 @@ class DBListEditor(object):
         self.port_entry.set_sensitive(False)
         self.updating_db = True
 
-        def callback(dbs, createdb):
+        def callback(dbs):
             self.updating_db = False
             self.db_cache = (host, port, self.current_profile['name'])
 
-            if dbs is None and createdb is None:
-                pass
-            elif dbs is None or dbs == -1:
+            if dbs is None or dbs == -1:
                 if dbs is None:
                     label = _(u'Could not connect to the server')
                 else:
@@ -313,10 +311,9 @@ class DBListEditor(object):
                 self.database_label.set_label('<b>%s</b>' % label)
                 self.database_label.show()
             elif dbs == 0:
-                if createdb:
-                    self.database_button.show()
-                else:
-                    self.database_entry.show()
+                self.database_button.show()
+            elif dbs == -2:
+                self.database_entry.show()
             else:
                 self.database_entry.set_text(dbname if dbname else '')
                 self.database_combo.show()
@@ -401,8 +398,7 @@ class DBLogin(object):
         self.dialog.vbox.pack_start(alignment, True, True, 0)
 
         image = gtk.Image()
-        image.set_from_file(os.path.join(PIXMAPS_DIR,
-            'tryton.png').decode('utf-8'))
+        image.set_from_file(os.path.join(PIXMAPS_DIR, 'tryton.png'))
         image.set_alignment(0.5, 1)
         ebox = gtk.EventBox()
         ebox.modify_bg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#1b2019"))
@@ -580,8 +576,8 @@ class DBLogin(object):
         if can_use_profile:
             for (configname, sectionname) in (('login.server', 'host'),
                     ('login.port', 'port'), ('login.db', 'database')):
-                if (self.profiles.get(profile_name, sectionname) != \
-                        CONFIG[configname]):
+                if (self.profiles.get(profile_name, sectionname)
+                        != CONFIG[configname]):
                     can_use_profile = False
                     break
 
@@ -651,7 +647,5 @@ class DBLogin(object):
         self.dialog.destroy()
         if res != gtk.RESPONSE_OK:
             rpc.logout()
-            from tryton.gui.main import Main
-            Main.get_main().refresh_ssl()
             raise TrytonError('QueryCanceled')
         return result

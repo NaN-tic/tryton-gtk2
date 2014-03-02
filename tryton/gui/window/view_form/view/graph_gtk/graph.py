@@ -327,7 +327,7 @@ class Graph(gtk.DrawingArea):
 
     def _getLegendPosition(self, width, height):
         return self.area.x + self.area.w * 0.05, \
-                self.area.y + self.area.h * 0.05
+            self.area.y + self.area.h * 0.05
 
     def display(self, group):
         self.updateDatas(group)
@@ -363,15 +363,14 @@ class Graph(gtk.DrawingArea):
                     context['context'] = context.copy()
                     context['_user'] = rpc._USER
                     for field in model.group.fields:
-                        context[field] = model[field].get(model,
-                            check_load=False)
+                        context[field] = model[field].get(model)
                     if not PYSONDecoder(context).decode(yfield['domain']):
                         continue
                 if yfield['name'] == '#':
                     self.datas[x][key] += 1
                 else:
                     self.datas[x][key] += \
-                            float(model[yfield['name']].get(model) or 0)
+                        float(model[yfield['name']].get(model) or 0)
         if isinstance(minx, datetime.datetime):
             date = minx
             while date <= maxx:
@@ -427,9 +426,9 @@ class Graph(gtk.DrawingArea):
             self.maxyval = 0.0
             self.minyval = 0.0
         else:
-            self.maxyval = max([reduce(lambda x, y: max(x, y), x.values()) \
+            self.maxyval = max([reduce(lambda x, y: max(x, y), x.values())
                     for x in self.datas.values()])
-            self.minyval = min([reduce(lambda x, y: min(x, y), x.values()) \
+            self.minyval = min([reduce(lambda x, y: min(x, y), x.values())
                     for x in self.datas.values()])
         if self.minyval > 0:
             self.minyval = 0.0
