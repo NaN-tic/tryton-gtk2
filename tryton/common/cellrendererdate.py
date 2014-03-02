@@ -3,7 +3,8 @@
 import gtk
 import gobject
 import pango
-from date_widget import mapping, DateEntry, compute_date
+
+from date_widget import DateEntry
 
 
 class CellRendererDate(gtk.GenericCellRenderer):
@@ -22,12 +23,13 @@ class CellRendererDate(gtk.GenericCellRenderer):
                 'Editable', 0, 10, 0, gobject.PARAM_READWRITE),
             'visible': (gobject.TYPE_INT, 'Visible',
                 'Visible', 0, 10, 0, gobject.PARAM_READWRITE),
+            'strikethrough': (gobject.TYPE_BOOLEAN, 'Strikethrough',
+                'Strikethrough', False, gobject.PARAM_WRITABLE),
     }
 
     def __init__(self, format):
         self.__gobject_init__()
         self._renderer = gtk.CellRendererText()
-        self._renderer.set_property('family', 'Monospace')
         self.set_property("mode", self._renderer.get_property("mode"))
 
         self.format = format
@@ -35,6 +37,11 @@ class CellRendererDate(gtk.GenericCellRenderer):
         self.text = self._renderer.get_property('text')
         self.editable = self._renderer.get_property('editable')
         self.visible = True
+
+    def set_sensitive(self, value):
+        if hasattr(self._renderer, 'set_sensitive'):
+            return self._renderer.set_sensitive(value)
+        return self._renderer.set_property('sensitive', value)
 
     def do_set_property(self, pspec, value):
         setattr(self, pspec.name, value)
@@ -77,7 +84,7 @@ class CellRendererDate(gtk.GenericCellRenderer):
             cell_area, flags):
         if not self.visible:
             return
-        editable = DateEntry(self.format, self._date_cb, self._process_cb)
+        editable = DateEntry(self.format)
         editable.set_property('shadow-type', gtk.SHADOW_NONE)
 
         colormap = editable.get_colormap()
@@ -93,10 +100,13 @@ class CellRendererDate(gtk.GenericCellRenderer):
             editable.modify_text(gtk.STATE_INSENSITIVE, fg_color)
         else:
             editable.modify_bg(gtk.STATE_ACTIVE, style.bg[gtk.STATE_ACTIVE])
-            editable.modify_base(gtk.STATE_NORMAL, style.base[gtk.STATE_NORMAL])
+            editable.modify_base(gtk.STATE_NORMAL,
+                style.base[gtk.STATE_NORMAL])
             editable.modify_fg(gtk.STATE_NORMAL, style.fg[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_NORMAL, style.text[gtk.STATE_NORMAL])
-            editable.modify_text(gtk.STATE_INSENSITIVE, style.text[gtk.STATE_INSENSITIVE])
+            editable.modify_text(gtk.STATE_NORMAL,
+                style.text[gtk.STATE_NORMAL])
+            editable.modify_text(gtk.STATE_INSENSITIVE,
+                style.text[gtk.STATE_INSENSITIVE])
 
         if self.text:
             editable.set_text(self.text)
@@ -105,25 +115,5 @@ class CellRendererDate(gtk.GenericCellRenderer):
         editable.grab_focus()
         editable.show()
         return editable
-
-    def _date_cb(self, event):
-        if event.keyval in (gtk.keysyms.BackSpace,):
-            self.cmd = self.cmd[:-1]
-            return True
-        if event.keyval < 250:
-            value = chr(event.keyval)
-            self.cmd += value
-        return True
-
-    def _process_cb(self, ok, widget, event=None):
-        if ok:
-            self._date_cb(event)
-        else:
-            if hasattr(event, 'keyval') and not event.keyval == gtk.keysyms.Escape:
-                dt = widget.date_get()
-                res= compute_date(self.cmd, dt, widget.format)
-                if res:
-                    widget.date_set(res)
-            self.cmd = ''
 
 gobject.type_register(CellRendererDate)

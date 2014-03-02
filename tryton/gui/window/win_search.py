@@ -2,39 +2,45 @@
 #this repository contains the full copyright notices and license terms.
 import gtk
 import gettext
-import tryton.rpc as rpc
-from tryton.gui.window.view_form.screen import Screen
-import tryton.gui.window.view_form.widget_search as widget_search
-from tryton.config import TRYTON_ICON
 import tryton.common as common
+from tryton.gui.window.view_form.screen import Screen
+from tryton.config import TRYTON_ICON
 from tryton.gui.window.win_form import WinForm
+from tryton.gui.window.nomodal import NoModal
 
 _ = gettext.gettext
 
 
-class WinSearch(object):
+class WinSearch(NoModal):
 
-    def __init__(self, model, sel_multi=True, ids=None, context=None,
-            domain=None, parent=None, views_preload=None):
+    def __init__(self, model, callback, sel_multi=True, ids=None, context=None,
+            domain=None, view_ids=None, views_preload=None, new=True):
+        NoModal.__init__(self)
         if views_preload is None:
             views_preload = {}
         self.domain = domain or []
         self.context = context or {}
         self.sel_multi = sel_multi
-        self.parent = parent
+        self.callback = callback
 
         self.win = gtk.Dialog(_('Search'), self.parent,
-                gtk.DIALOG_MODAL|gtk.DIALOG_DESTROY_WITH_PARENT)
+            gtk.DIALOG_DESTROY_WITH_PARENT)
         self.win.set_icon(TRYTON_ICON)
         self.win.set_has_separator(True)
         self.win.set_default_response(gtk.RESPONSE_APPLY)
+        self.win.connect('response', self.response)
 
         self.accel_group = gtk.AccelGroup()
         self.win.add_accel_group(self.accel_group)
 
+        self.but_cancel = self.win.add_button(gtk.STOCK_CANCEL,
+            gtk.RESPONSE_CANCEL)
         self.but_find = self.win.add_button(gtk.STOCK_FIND, gtk.RESPONSE_APPLY)
-        self.but_new = self.win.add_button(gtk.STOCK_NEW, gtk.RESPONSE_ACCEPT)
-        self.but_cancel = self.win.add_button(gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL)
+        if new and common.MODELACCESS[model]['create']:
+            self.but_new = self.win.add_button(gtk.STOCK_NEW,
+                gtk.RESPONSE_ACCEPT)
+            self.but_new.set_accel_path('<tryton>/Form/New', self.accel_group)
+
         self.but_ok = self.win.add_button(gtk.STOCK_OK, gtk.RESPONSE_OK)
         self.but_ok.add_accelerator('clicked', self.accel_group,
                 gtk.keysyms.Return, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
@@ -47,11 +53,13 @@ class WinSearch(object):
         scrollwindow.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
         self.win.vbox.pack_start(scrollwindow, expand=True, fill=True)
 
-        self.screen = Screen(model, self.win, domain=domain,
-                view_type=['tree'], context=context,
-                views_preload=views_preload, row_activate=self.sig_activate)
+        self.screen = Screen(model, domain=domain, mode=['tree'],
+            context=context, view_ids=view_ids, views_preload=views_preload,
+            row_activate=self.sig_activate)
         self.view = self.screen.current_view
         self.view.unset_editable()
+        # Prevent to set tree_state
+        self.screen.tree_states_done.add(id(self.view))
         sel = self.view.widget_tree.get_selection()
 
         if not sel_multi:
@@ -61,9 +69,10 @@ class WinSearch(object):
         viewport = gtk.Viewport()
         viewport.set_shadow_type(gtk.SHADOW_NONE)
         viewport.add(self.screen.widget)
+        self.screen.widget.show()
+        viewport.show()
         scrollwindow.add(viewport)
-        scrollwindow.show_all()
-        self.view.widget_tree.connect('button_press_event', self.sig_button)
+        scrollwindow.show()
 
         self.model_name = model
 
@@ -72,48 +81,53 @@ class WinSearch(object):
 
         self.win.set_size_request(700, 500)
 
+        self.register()
+        sensible_allocation = self.sensible_widget.get_allocation()
+        self.win.set_default_size(int(sensible_allocation.width * 0.9),
+            int(sensible_allocation.height * 0.9))
+        self.win.show()
+        common.center_window(self.win, self.parent, self.sensible_widget)
+
     def sig_activate(self, *args):
         self.view.widget_tree.emit_stop_by_name('row_activated')
-        if not self.sel_multi:
-            self.win.response(gtk.RESPONSE_OK)
-        return False
-
-    def sig_button(self, view, event):
-        if event.button == 1 and event.type == gtk.gdk._2BUTTON_PRESS:
-            self.win.response(gtk.RESPONSE_OK)
-        return False
+        self.win.response(gtk.RESPONSE_OK)
+        return True
 
     def destroy(self):
-        self.parent.present()
         self.screen.destroy()
         self.win.destroy()
+        NoModal.destroy(self)
 
-    def run(self):
-        end = False
-        while not end:
-            button = self.win.run()
-            if button == gtk.RESPONSE_OK:
-                res = self.screen.sel_ids_get()
-                end = True
-            elif button == gtk.RESPONSE_APPLY:
-                end = not self.screen.search_filter()
-                if end:
-                    res = self.screen.sel_ids_get()
-            elif button == gtk.RESPONSE_ACCEPT:
-                res = None
-                screen = Screen(self.model_name, self.win, domain=self.domain,
-                        context=self.context, view_type=['form'])
-                win = WinForm(screen, self.win, new=True)
-                while win.run():
-                    if screen.save_current():
-                        res = [screen.current_record.id]
-                        break
-                    else:
-                        screen.display()
-                win.destroy()
-                end = True
-            else:
-                res = None
-                end = True
+    def show(self):
+        self.win.show()
+
+    def hide(self):
+        self.win.hide()
+
+    def response(self, win, response_id):
+        res = None
+        if response_id == gtk.RESPONSE_OK:
+            res = [r.id for r in self.screen.selected_records]
+        elif response_id == gtk.RESPONSE_APPLY:
+            self.screen.search_filter(self.screen.screen_container.get_text())
+            return
+        elif response_id == gtk.RESPONSE_ACCEPT:
+            screen = Screen(self.model_name, domain=self.domain,
+                context=self.context, mode=['form'])
+
+            def callback(result):
+                if result and screen.save_current():
+                    record = screen.current_record
+                    res = [(record.id, record.value.get('rec_name', ''))]
+                    self.callback(res)
+                else:
+                    self.callback(None)
+            self.destroy()
+            WinForm(screen, callback, new=True)
+            return
+        if res:
+            group = self.screen.group
+            res = [(id_, group.get(id_).value.get('rec_name', ''))
+                for id_ in res]
+        self.callback(res)
         self.destroy()
-        return res

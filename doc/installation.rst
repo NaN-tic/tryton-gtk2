@@ -4,12 +4,13 @@ Installing tryton
 Prerequisites
 -------------
 
- * Python 2.4 or later (http://www.python.org/)
- * pygtk 2.0 or later (http://www.pygtk.org/)
+ * Python 2.7 or later (http://www.python.org/)
+ * pygtk 2.22 or later (http://www.pygtk.org/)
  * librsvg (http://librsvg.sourceforge.net/)
  * python-dateutil (http://labix.org/python-dateutil)
- * simplejson (http://undefined.org/python/#simplejson)
- * Optional: pytz (http://pytz.sourceforge.net/)
+ * Optional: simplejson (http://undefined.org/python/#simplejson)
+ * Optional: cdecimal (http://www.bytereef.org/mpdecimal/index.html)
+ * Optional: GooCalendar (http://code.google.com/p/goocalendar/)
 
 Installation
 ------------

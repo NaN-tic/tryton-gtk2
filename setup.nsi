@@ -55,14 +55,20 @@ Var STARTMENU_FOLDER
 
 ;Languages
 
+!insertmacro MUI_LANGUAGE "Catalan"
+!include "catalan.nsh"
 !insertmacro MUI_LANGUAGE "English"
 !include "english.nsh"
 !insertmacro MUI_LANGUAGE "French"
 !include "french.nsh"
 !insertmacro MUI_LANGUAGE "German"
 !include "german.nsh"
+!insertmacro MUI_LANGUAGE "Slovenian"
+!include "slovenian.nsh"
 !insertmacro MUI_LANGUAGE "Spanish"
 !include "spanish.nsh"
+!insertmacro MUI_LANGUAGE "Russian"
+!include "russian.nsh"
 
 ;Reserve Files
 
@@ -97,6 +103,12 @@ SectionIn 1 2 RO
 
     SetOutPath "$INSTDIR\doc"
     File /r "doc\*"
+
+    ;Register URL protocol
+    WriteRegStr HKCR "tryton" "" "URL:Tryton Protocol"
+    WriteRegStr HKCR "tryton" "URL Protocol" ""
+    WriteRegStr HKCR "tryton\DefaultIcon" "" "$INSTDIR\tryton.exe,1"
+    WriteRegStr HKCR "tryton\shell\open\command" "" '$INSTDIR\tryton.exe "%1"'
 
     ;Write the installation path into the registry
     WriteRegStr HKCU "Software\tryton-${VERSION}" "" $INSTDIR
