@@ -470,10 +470,12 @@ class O2MField(CharField):
     def _group_changed(self, group, record):
         if not record.parent:
             return
-        record.parent.modified_fields.setdefault(self.name)
-        self.sig_changed(record.parent)
-        record.parent.validate(softvalidation=True)
-        record.parent.signal('record-changed')
+        # Store parent as it could be removed by validation
+        parent = record.parent
+        parent.modified_fields.setdefault(self.name)
+        self.sig_changed(parent)
+        parent.validate(softvalidation=True)
+        parent.signal('record-changed')
 
     def _group_list_changed(self, group, signal):
         if group.model_name == group.parent.model_name:
@@ -517,9 +519,11 @@ class O2MField(CharField):
             return []
         record_removed = record.value[self.name].record_removed
         record_deleted = record.value[self.name].record_deleted
-        result = [('add', [])]
+        result = []
         parent_name = self.attrs.get('relation_field', '')
+        to_add = []
         to_create = []
+        to_write = []
         for record2 in record.value[self.name]:
             if record2 in record_removed or record2 in record_deleted:
                 continue
@@ -527,18 +531,20 @@ class O2MField(CharField):
                 values = record2.get()
                 values.pop(parent_name, None)
                 if record2.modified and values:
-                    result.append(('write', [record2.id], values))
-                result[0][1].append(record2.id)
+                    to_write.extend(([record2.id], values))
+                to_add.append(record2.id)
             else:
                 values = record2.get()
                 values.pop(parent_name, None)
                 to_create.append(values)
+        if to_add:
+            result.append(('add', to_add))
         if to_create:
             result.append(('create', to_create))
-        if not result[0][1]:
-            del result[0]
+        if to_write:
+            result.append(('write',) + tuple(to_write))
         if record_removed:
-            result.append(('unlink', [x.id for x in record_removed]))
+            result.append(('remove', [x.id for x in record_removed]))
         if record_deleted:
             result.append(('delete', [x.id for x in record_deleted]))
         return result
@@ -632,7 +638,22 @@ class O2MField(CharField):
         self._set_value(record, value, default=False)
 
     def set_client(self, record, value, force_change=False):
-        pass
+        # domain inversion could try to set id as value
+        if isinstance(value, (int, long)):
+            value = [value]
+
+        previous_ids = [r.id for r in record.value.get(self.name) or []]
+        self._set_value(record, value)
+        if previous_ids != value:
+            record.modified_fields.setdefault(self.name)
+            record.signal('record-modified')
+            self.sig_changed(record)
+            record.validate(softvalidation=True)
+            record.signal('record-changed')
+        elif force_change:
+            self.sig_changed(record)
+            record.validate(softvalidation=True)
+            record.signal('record-changed')
 
     def set_default(self, record, value):
         previous_group = record.value.get(self.name)
@@ -727,7 +748,8 @@ class O2MField(CharField):
 
     def domain_get(self, record):
         screen_domain, attr_domain = self.domains_get(record)
-        return [localize_domain(inverse_leaf(screen_domain)), attr_domain]
+        return [localize_domain(inverse_leaf(screen_domain), self.name),
+            attr_domain]
 
 
 class M2MField(O2MField):

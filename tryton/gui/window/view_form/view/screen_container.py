@@ -4,7 +4,6 @@ import gtk
 import gettext
 import operator
 import gobject
-import collections
 
 import tryton.common as common
 from tryton.common.domain_parser import quote
@@ -103,10 +102,9 @@ class ScreenContainer(object):
         self.completion.set_model(gtk.ListStore(str))
         self.completion.set_text_column(0)
         self.completion.props.inline_completion = True
-        if hasattr(self.completion.props, 'inline_selection'):
-            self.completion.props.inline_selection = True
-        if hasattr(self.completion.props, 'popup_set_width'):
-            self.completion.props.popup_set_width = False
+        self.completion.props.inline_selection = True
+        self.completion.props.popup_set_width = False
+        self.completion.set_match_func(lambda *a: True)
         self.completion.connect('match-selected', self.match_selected)
         self.search_entry.connect('activate', self.activate)
         self.search_entry.set_completion(self.completion)
@@ -412,7 +410,7 @@ class ScreenContainer(object):
                 else:
                     value = quote(entry.get_text())
                 if value:
-                    text += label + ' ' + value + ' '
+                    text += quote(label) + ': ' + value + ' '
             self.set_text(text)
             self.last_search_text = self.get_text()
             self.do_search()
@@ -430,16 +428,11 @@ class ScreenContainer(object):
             self.search_window.set_title('Tryton')
             self.search_window.set_icon(TRYTON_ICON)
             self.search_window.set_decorated(False)
-            if hasattr(self.search_window, 'set_deletable'):
-                self.search_window.set_deletable(False)
+            self.search_window.set_deletable(False)
             self.search_window.connect('key-press-event', key_press)
             vbox = gtk.VBox()
             fields = [f for f in self.screen.domain_parser.fields.itervalues()
                 if f.get('searchable', True)]
-            if (not hasattr(collections, 'OrderedDict')
-                    or not isinstance(self.screen.domain_parser.fields,
-                        collections.OrderedDict)):
-                fields.sort(key=operator.itemgetter('string'))
             self.search_table = gtk.Table(rows=len(fields), columns=2)
             self.search_table.set_homogeneous(False)
             self.search_table.set_border_width(5)
@@ -481,11 +474,12 @@ class ScreenContainer(object):
                     entry.connect('activate', lambda *a: search())
                 self.search_table.attach(entry, 1, 2, i, i + 1,
                     yoptions=yoptions)
-                self.search_table.fields.append((field['string'] + ':', entry))
+                self.search_table.fields.append((field['string'], entry))
 
             scrolled = gtk.ScrolledWindow()
             scrolled.add_with_viewport(self.search_table)
             scrolled.set_shadow_type(gtk.SHADOW_NONE)
+            scrolled.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
             vbox.pack_start(scrolled, expand=True, fill=True)
             find_button = gtk.Button(_('Find'))
             find_button.connect('clicked', lambda *a: search())
@@ -500,26 +494,19 @@ class ScreenContainer(object):
             self.search_window.add(vbox)
             vbox.show_all()
 
-            # Disable scrolling:
-            scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_NEVER)
-            # See what changed:
-            new_size = self.search_window.size_request()
-            # Reenable scrolling:
-            scrolled.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+            new_size = map(sum, zip(self.search_table.size_request(),
+                    scrolled.size_request()))
             self.search_window.set_default_size(*new_size)
 
         parent = button.get_toplevel()
-        button_x, button_y = button.translate_coordinates(parent,
-            *parent.window.get_origin())
+        button_x, button_y = button.translate_coordinates(parent, 0, 0)
         button_allocation = button.get_allocation()
 
-        # Resize the window to not be out of the screen
+        # Resize the window to not be out of the parent
         width, height = self.search_window.get_default_size()
-        screen = self.search_window.get_screen()
-        screen_width = screen.get_width()
-        screen_height = screen.get_height()
-        delta_width = screen_width - (button_x + width)
-        delta_height = screen_height - (button_y + button_allocation.height
+        allocation = parent.get_allocation()
+        delta_width = allocation.width - (button_x + width)
+        delta_height = allocation.height - (button_y + button_allocation.height
             + height)
         if delta_width < 0:
             width += delta_width
@@ -528,8 +515,8 @@ class ScreenContainer(object):
         self.search_window.resize(width, height)
 
         # Move the window under the button
-        self.search_window.move(button_x,
-            button_y + button_allocation.height)
+        x, y = button.window.get_origin()
+        self.search_window.move(x, y + button_allocation.height)
 
         from tryton.gui.main import Main
         page = Main.get_main().get_page()

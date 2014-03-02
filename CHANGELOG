@@ -1,8 +1,13 @@
-Version 3.0.2 - 2013-12-04
-* Bug fixes (see mercurial logs for details)
-
-Version 3.0.1 - 2013-11-03
-* Bug fixes (see mercurial logs for details)
+* Add Len to PYSON
+* Use a pool of connection
+* Manage client actions from button and wizard
+* Add tree_invisible attribute to button in tree view
+* Add buttons of the view in actions menu
+* Don't evaluate anymore relate action with the record
+* Paste on editable list create new records if needed
+* Drop support of Python 2.6
+* Allow to search on rec_name of Reference fields
+* Use local timezone
 * Sanitize report file extension
 
 Version 3.0.0 - 2013-10-21

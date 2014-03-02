@@ -10,6 +10,7 @@ import os
 import subprocess
 import re
 import logging
+import unicodedata
 from functools import partial
 from tryton.config import CONFIG
 from tryton.config import TRYTON_ICON, PIXMAPS_DIR
@@ -38,10 +39,7 @@ try:
 except ImportError:
     ssl = None
 from threading import Lock
-try:
-    import pytz
-except ImportError:
-    pytz = None
+import dateutil.tz
 
 from tryton.exceptions import (TrytonServerError, TrytonError,
     TrytonServerUnavailable)
@@ -435,7 +433,11 @@ def file_selection(title, filename='',
     win.set_icon(TRYTON_ICON)
     win.set_current_folder(CONFIG['client.default_path'])
     if filename:
-        win.set_current_name(filename)
+        if action in (gtk.FILE_CHOOSER_ACTION_SAVE,
+                gtk.FILE_CHOOSER_ACTION_CREATE_FOLDER):
+            win.set_current_name(filename)
+        else:
+            win.set_filename(filename)
     win.set_select_multiple(multi)
     win.set_default_response(gtk.RESPONSE_OK)
     if filters is not None:
@@ -491,6 +493,18 @@ def file_selection(title, filename='',
         parent.present()
         win.destroy()
         return filenames
+
+
+_slugify_strip_re = re.compile(r'[^\w\s-]')
+_slugify_hyphenate_re = re.compile(r'[-\s]+')
+
+
+def slugify(value):
+    if not isinstance(value, unicode):
+        value = unicode(value)
+    value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore')
+    value = unicode(_slugify_strip_re.sub('', value).strip().lower())
+    return _slugify_hyphenate_re.sub('-', value)
 
 
 def file_open(filename, type, print_p=False):
@@ -623,12 +637,8 @@ class WarningDialog(UniqueDialog):
     def build_dialog(self, parent, message, title, buttons=gtk.BUTTONS_OK):
         dialog = gtk.MessageDialog(parent, gtk.DIALOG_DESTROY_WITH_PARENT,
             gtk.MESSAGE_WARNING, buttons)
-        if hasattr(dialog, 'format_secondary_markup'):
-            dialog.set_markup('<b>%s</b>' % (to_xml(title)))
-            dialog.format_secondary_markup(to_xml(message))
-        else:
-            dialog.set_markup(
-                '<b>%s</b>\n%s' % (to_xml(title), to_xml(message)))
+        dialog.set_markup('<b>%s</b>' % (to_xml(title)))
+        dialog.format_secondary_markup(to_xml(message))
         return dialog
 
 warning = WarningDialog()
@@ -982,10 +992,15 @@ def send_bugtracker(title, msg):
                 title = '[no title]'
             issue_id = None
             msg_ids = server.filter('msg', None, {'summary': str(msg_md5)})
-            if msg_ids:
-                issue_ids = server.filter('issue', None, {'messages': msg_ids})
-                if issue_ids:
-                    issue_id = issue_ids[0]
+            for msg_id in msg_ids:
+                summary = server.display(
+                    'msg%s' % msg_id, 'summary')['summary']
+                if summary == msg_md5:
+                    issue_ids = server.filter(
+                        'issue', None, {'messages': msg_id})
+                    if issue_ids:
+                        issue_id = issue_ids[0]
+                        break
             if issue_id:
                 # issue to same message already exists, add user to nosy-list
                 server.set('issue' + str(issue_id), *['nosy=+' + user])
@@ -1463,15 +1478,11 @@ def filter_domain(domain):
 
 
 def timezoned_date(date, reverse=False):
-    if pytz and rpc.CONTEXT.get('timezone') and rpc.TIMEZONE:
-        lzone = pytz.timezone(rpc.CONTEXT['timezone'])
-        szone = pytz.timezone(rpc.TIMEZONE)
-        if reverse:
-            lzone, szone = szone, lzone
-        sdt = szone.localize(date, is_dst=True)
-        ldt = sdt.astimezone(lzone)
-        date = ldt
-    return date
+    lzone = dateutil.tz.tzlocal()
+    szone = dateutil.tz.tzutc()
+    if reverse:
+        lzone, szone = szone, lzone
+    return date.replace(tzinfo=szone).astimezone(lzone)
 
 
 def untimezoned_date(date):

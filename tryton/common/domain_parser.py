@@ -9,7 +9,7 @@ from decimal import Decimal
 import datetime
 import time
 import io
-import collections
+from collections import OrderedDict
 
 from tryton.translate import date_format
 from tryton.common import untimezoned_date, datetime_strftime
@@ -159,7 +159,8 @@ def append_ending_clause(domain, clause, deep):
 
 def default_operator(field):
     "Return default operator for field"
-    if field['type'] in ('char', 'text', 'many2one', 'many2many', 'one2many'):
+    if field['type'] in ('char', 'text', 'many2one', 'many2many', 'one2many',
+            'reference'):
         return 'ilike'
     else:
         return '='
@@ -177,6 +178,38 @@ def negate_operator(operator):
 
 def time_format(field):
     return PYSONDecoder({}).decode(field['format'])
+
+
+def split_target_value(field, value):
+    "Split the reference value into target and value"
+    assert field['type'] == 'reference'
+    target = None
+    if isinstance(value, basestring):
+        for key, text in field['selection']:
+            if value.lower().startswith(text.lower() + ','):
+                target = key
+                value = value[len(text) + 1:]
+                break
+    return target, value
+
+
+def test_split_target_value():
+    field = {
+        'type': 'reference',
+        'selection': [
+            ('spam', 'Spam'),
+            ('ham', 'Ham'),
+            ('e', 'Eggs'),
+            ]
+        }
+    for value, result in (
+            ('Spam', (None, 'Spam')),
+            ('foo', (None, 'foo')),
+            ('Spam,', ('spam', '')),
+            ('Ham,bar', ('ham', 'bar')),
+            ('Eggs,foo', ('e', 'foo')),
+            ):
+        assert split_target_value(field, value) == result
 
 
 def convert_value(field, value):
@@ -344,7 +377,8 @@ def test_convert_datetime():
         }
     for value, result in (
             ('12/04/2002', datetime.datetime(2002, 12, 4)),
-            ('12/04/2002 12:30:00', datetime.datetime(2002, 12, 4, 12, 30)),
+            ('12/04/2002 12:30:00', untimezoned_date(
+                    datetime.datetime(2002, 12, 4, 12, 30))),
             ('test', None),
             (None, None),
             ):
@@ -376,7 +410,7 @@ def test_convert_time():
         assert convert_value(field, value) == result
 
 
-def format_value(field, value):
+def format_value(field, value, target=None):
     "Format value for field"
 
     def format_boolean():
@@ -401,6 +435,12 @@ def format_value(field, value):
     def format_selection():
         selections = dict(field['selection'])
         return selections.get(value, value) or ''
+
+    def format_reference():
+        if not target:
+            return format_selection()
+        selections = dict(field['selection'])
+        return '%s,%s' % (selections.get(target, target), value)
 
     def format_datetime():
         if not value:
@@ -432,7 +472,7 @@ def format_value(field, value):
         'float': format_float,
         'numeric': format_float,
         'selection': format_selection,
-        'reference': format_selection,
+        'reference': format_reference,
         'datetime': format_datetime,
         'date': format_date,
         'time': format_time,
@@ -575,12 +615,25 @@ def complete_value(field, value):
         test_value = value if value is not None else ''
         if isinstance(value, list):
             test_value = value[-1]
+        test_value = test_value.strip('%')
         for svalue, test in field['selection']:
             if test.lower().startswith(test_value.lower()):
                 if isinstance(value, list):
                     yield value[:-1] + [svalue]
                 else:
                     yield svalue
+
+    def complete_reference():
+        test_value = value if value is not None else ''
+        if isinstance(value, list):
+            test_value = value[-1]
+        test_value = test_value.strip('%')
+        for svalue, test in field['selection']:
+            if test.lower().startswith(test_value.lower()):
+                if isinstance(value, list):
+                    yield value[:-1] + [svalue]
+                else:
+                    yield likify(svalue)
 
     def complete_datetime():
         yield datetime.date.today()
@@ -595,7 +648,7 @@ def complete_value(field, value):
     completes = {
         'boolean': complete_boolean,
         'selection': complete_selection,
-        'reference': complete_selection,
+        'reference': complete_reference,
         'datetime': complete_datetime,
         'date': complete_date,
         'time': complete_time,
@@ -721,11 +774,7 @@ class DomainParser(object):
     "A parser for domain"
 
     def __init__(self, fields):
-        if hasattr(collections, 'OrderedDict'):
-            odict = collections.OrderedDict
-        else:
-            odict = dict
-        self.fields = odict((name, f)
+        self.fields = OrderedDict((name, f)
             for name, f in fields.iteritems()
             if f.get('searchable', True))
         self.strings = dict((f['string'].lower(), f)
@@ -772,46 +821,52 @@ class DomainParser(object):
         def string_(clause):
             if not clause:
                 return ''
-            if (isinstance(clause[0], basestring)
-                    and (clause[0] in self.fields
-                    or clause[0] == 'rec_name')):
-                name, operator, value = clause
-                if name not in self.fields:
-                    escaped = value.replace('%%', '__')
-                    if escaped.startswith('%') and escaped.endswith('%'):
-                        value = value[1:-1]
-                    return quote(value)
-                field = self.fields[name]
-                if 'ilike' in operator:
-                    escaped = value.replace('%%', '__')
-                    if escaped.startswith('%') and escaped.endswith('%'):
-                        value = value[1:-1]
-                    elif '%' not in escaped:
-                        if operator == 'ilike':
-                            operator = '='
-                        else:
-                            operator = '!'
-                        value = value.replace('%%', '%')
-                def_operator = default_operator(field)
-                if (def_operator == operator.strip()
-                        or (def_operator in operator
-                            and 'not' in operator)):
-                    operator = operator.rstrip(def_operator
-                        ).replace('not', '!').strip()
-                if operator.endswith('in'):
-                    if operator == 'not in':
-                        operator = '!'
-                    else:
-                        operator = ''
-                formatted_value = format_value(field, value)
-                if (operator in OPERATORS and
-                        field['type'] in ('char', 'text', 'sha', 'selection')
-                        and value == ''):
-                    formatted_value = '""'
-                return '%s: %s%s' % (quote(field['string']), operator,
-                    formatted_value)
-            else:
+            if (not isinstance(clause[0], basestring)
+                    or clause[0] in ('AND', 'OR')):
                 return '(%s)' % self.string(clause)
+            name, operator, value = clause[:3]
+            if name.endswith('.rec_name'):
+                name = name[:-9]
+            if name not in self.fields:
+                escaped = value.replace('%%', '__')
+                if escaped.startswith('%') and escaped.endswith('%'):
+                    value = value[1:-1]
+                return quote(value)
+            field = self.fields[name]
+
+            if len(clause) > 3:
+                target = clause[3]
+            else:
+                target = None
+
+            if 'ilike' in operator:
+                escaped = value.replace('%%', '__')
+                if escaped.startswith('%') and escaped.endswith('%'):
+                    value = value[1:-1]
+                elif '%' not in escaped:
+                    if operator == 'ilike':
+                        operator = '='
+                    else:
+                        operator = '!'
+                    value = value.replace('%%', '%')
+            def_operator = default_operator(field)
+            if (def_operator == operator.strip()
+                    or (def_operator in operator
+                        and 'not' in operator)):
+                operator = operator.rstrip(def_operator
+                    ).replace('not', '!').strip()
+            if operator.endswith('in'):
+                if operator == 'not in':
+                    operator = '!'
+                else:
+                    operator = ''
+            formatted_value = format_value(field, value, target)
+            if (operator in OPERATORS and
+                    field['type'] in ('char', 'text', 'sha', 'selection')
+                    and value == ''):
+                formatted_value = '""'
+            return '%s: %s%s' % (quote(field['string']), operator,
+                formatted_value)
 
         if not domain:
             return ''
@@ -862,8 +917,13 @@ class DomainParser(object):
         "Return all completion for the clause"
         if len(clause) == 1:
             name, = clause
-        else:
+        elif len(clause) == 3:
             name, operator, value = clause
+        else:
+            name, operator, value, target = clause
+            if name.endswith('.rec_name'):
+                name = name[:-9]
+            value = target
         if name == 'rec_name':
             if operator == 'ilike':
                 escaped = value.replace('%%', '__')
@@ -974,6 +1034,14 @@ class DomainParser(object):
                 else:
                     name, operator, value = clause
                     field = self.strings[name.lower()]
+                    field_name = field['name']
+
+                    target = None
+                    if field['type'] == 'reference':
+                        target, value = split_target_value(field, value)
+                        if target:
+                            field_name += '.rec_name'
+
                     if operator is None:
                         operator = default_operator(field)
                     if isinstance(value, list):
@@ -983,8 +1051,6 @@ class DomainParser(object):
                             operator = 'in'
                     if operator == '!':
                         operator = negate_operator(default_operator(field))
-                    if 'like' in operator:
-                        value = likify(value)
                     if field['type'] in ('integer', 'float', 'numeric',
                             'datetime', 'date', 'time'):
                         if value and '..' in value:
@@ -992,15 +1058,23 @@ class DomainParser(object):
                             lvalue = convert_value(field, lvalue)
                             rvalue = convert_value(field, rvalue)
                             yield iter([
-                                    (field['name'], '>=', lvalue),
-                                    (field['name'], '<', rvalue),
+                                    (field_name, '>=', lvalue),
+                                    (field_name, '<', rvalue),
                                     ])
                             continue
                     if isinstance(value, list):
                         value = [convert_value(field, v) for v in value]
+                        if field['type'] in ('many2one', 'one2many',
+                                'many2many', 'one2one'):
+                            field_name += '.rec_name'
                     else:
                         value = convert_value(field, value)
-                    yield field['name'], operator, value
+                    if 'like' in operator:
+                        value = likify(value)
+                    if target:
+                        yield (field_name, operator, value, target)
+                    else:
+                        yield field_name, operator, value
 
 
 def test_stringable():
@@ -1034,6 +1108,19 @@ def test_string():
                 'string': 'Date',
                 'type': 'date',
                 },
+            'reference': {
+                'string': 'Reference',
+                'type': 'reference',
+                'selection': [
+                    ('spam', 'Spam'),
+                    ('ham', 'Ham'),
+                    ]
+                },
+            'many2one': {
+                'string': 'Many2One',
+                'name': 'many2one',
+                'type': 'many2one',
+                },
             })
     assert dom.string([('name', '=', 'Doe')]) == 'Name: =Doe'
     assert dom.string([('name', '=', None)]) == 'Name: ='
@@ -1066,6 +1153,15 @@ def test_string():
     assert dom.string([('surname', 'ilike', '%Doe%')]) == '"(Sur)Name": Doe'
     assert dom.string([('date', '>=', datetime.date(2012, 10, 24))]) == \
         'Date: >=10/24/2012'
+    assert dom.string([('reference', 'ilike', '%foo%')]) == \
+        'Reference: foo'
+    assert dom.string([('reference.rec_name', 'ilike', '%bar%', 'spam')]) == \
+        'Reference: Spam,bar'
+    assert dom.string([('reference', 'in', ['foo', 'bar'])]) == \
+        'Reference: foo;bar'
+    assert dom.string([('many2one', 'ilike', '%John%')]) == 'Many2One: John'
+    assert dom.string([('many2one.rec_name', 'in', ['John', 'Jane'])]) == \
+        'Many2One: John;Jane'
 
 
 def test_group():
@@ -1174,6 +1270,20 @@ def test_parse_clause():
                     ('female', 'Female'),
                     ],
                 },
+            'reference': {
+                'string': 'Reference',
+                'name': 'reference',
+                'type': 'reference',
+                'selection': [
+                    ('spam', 'Spam'),
+                    ('ham', 'Ham'),
+                    ]
+                },
+            'many2one': {
+                'string': 'Many2One',
+                'name': 'many2one',
+                'type': 'many2one',
+                },
             })
     assert rlist(dom.parse_clause([('John',)])) == [
         ('rec_name', 'ilike', '%John%')]
@@ -1204,3 +1314,21 @@ def test_parse_clause():
             ('integer', '>=', 3),
             ('integer', '<', 5),
             ]]
+    assert rlist(dom.parse_clause([('Reference', None, 'foo')])) == [
+        ('reference', 'ilike', '%foo%'),
+        ]
+    assert rlist(dom.parse_clause([('Reference', None, 'Spam')])) == [
+        ('reference', 'ilike', '%spam%'),
+        ]
+    assert rlist(dom.parse_clause([('Reference', None, 'Spam,bar')])) == [
+        ('reference.rec_name', 'ilike', '%bar%', 'spam'),
+        ]
+    assert rlist(dom.parse_clause([('Reference', None, ['foo', 'bar'])])) == [
+        ('reference', 'in', ['foo', 'bar']),
+        ]
+    assert rlist(dom.parse_clause([('Many2One', None, 'John')])) == [
+        ('many2one', 'ilike', '%John%'),
+        ]
+    assert rlist(dom.parse_clause([('Many2One', None, ['John', 'Jane'])])) == [
+        ('many2one.rec_name', 'in', ['John', 'Jane']),
+        ]

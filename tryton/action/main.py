@@ -8,8 +8,7 @@ import gettext
 import tempfile
 import os
 import webbrowser
-from tryton.pyson import PYSONEncoder
-from tryton.common import RPCProgress, RPCExecute, RPCException
+from tryton.common import RPCProgress, RPCExecute, RPCException, slugify
 
 _ = gettext.gettext
 
@@ -40,10 +39,9 @@ class Action(object):
         if not print_p and direct_print:
             print_p = True
         dtemp = tempfile.mkdtemp(prefix='tryton_')
+
         fp_name = os.path.join(dtemp,
-            name.replace(os.sep, '_').replace(os.altsep or os.sep, '_')
-            + os.extsep
-            + type.replace(os.sep, '_').replace(os.altsep or os.sep, '_'))
+            slugify(name) + os.extsep + slugify(type))
         with open(fp_name, 'wb') as file_d:
             file_d.write(data)
         if email_print:
@@ -85,6 +83,7 @@ class Action(object):
         if 'type' not in (action or {}):
             return
 
+        data['action_id'] = action['id']
         if action['type'] == 'ir.action.act_window':
             view_ids = False
             view_mode = None
@@ -97,7 +96,7 @@ class Action(object):
             action.setdefault('pyson_domain', '[]')
             ctx = {
                 'active_model': data.get('res_model'),
-                'active_id': data.get('id', False),
+                'active_id': data.get('id'),
                 'active_ids': data.get('ids', []),
             }
             ctx.update(rpc.CONTEXT)
@@ -176,25 +175,12 @@ class Action(object):
         Evaluate the action with the record.
         '''
         action = action.copy()
-        if atype in ('print', 'action'):
-            email = {}
-            if 'pyson_email' in action:
-                email = record.expr_eval(action['pyson_email'])
-                if not email:
-                    email = {}
-            if 'subject' not in email:
-                email['subject'] = action['name'].replace('_', '')
-            action['email'] = email
-        elif atype == 'relate':
-            encoder = PYSONEncoder()
-            if 'pyson_domain' in action:
-                action['pyson_domain'] = encoder.encode(
-                    record.expr_eval(action['pyson_domain']))
-            if 'pyson_context' in action:
-                action['pyson_context'] = encoder.encode(
-                    record.expr_eval(action['pyson_context']))
-
-        else:
-            raise NotImplementedError("Action type '%s' is not supported" %
-                atype)
+        email = {}
+        if 'pyson_email' in action:
+            email = record.expr_eval(action['pyson_email'])
+            if not email:
+                email = {}
+        if 'subject' not in email:
+            email['subject'] = action['name'].replace('_', '')
+        action['email'] = email
         return action

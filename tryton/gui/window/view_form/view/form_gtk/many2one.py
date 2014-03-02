@@ -12,6 +12,7 @@ from tryton.config import CONFIG
 from tryton.common.popup_menu import populate
 from tryton.common import RPCExecute, RPCException
 from tryton.common.completion import get_completion, update_completion
+from tryton.common.entry_position import manage_entry_position
 
 _ = gettext.gettext
 
@@ -33,6 +34,7 @@ class Many2One(WidgetInterface):
         self.wid_text.connect('focus-out-event',
             lambda x, y: self._focus_out())
         self.wid_text.connect_after('changed', self.sig_changed)
+        manage_entry_position(self.wid_text)
         self.changed = True
         self.focus_out = True
 
@@ -195,7 +197,8 @@ class Many2One(WidgetInterface):
         context = self.field.context_get(self.record)
         return Screen(self.get_model(), domain=domain, context=context,
             mode=['form'], view_ids=self.attrs.get('view_ids', '').split(','),
-            views_preload=self.attrs.get('views', {}), readonly=self._readonly)
+            views_preload=self.attrs.get('views', {}), readonly=self._readonly,
+            exclude_field=self.attrs.get('relation_field'))
 
     def sig_new(self, *args):
         model = self.get_model()
@@ -377,7 +380,8 @@ class Many2One(WidgetInterface):
             return
         if not self.record:
             return
-        if self.field.get(self.record) is not None:
+        id_ = self.id_from_value(self.field.get(self.record))
+        if id_ is not None and id_ >= 0:
             return
         model = self.get_model()
         update_completion(self.wid_text, self.record, self.field, model)

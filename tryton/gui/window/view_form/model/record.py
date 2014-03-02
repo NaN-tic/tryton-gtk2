@@ -281,7 +281,9 @@ class Record(SignalEvent):
         return result
 
     def pre_validate(self):
-        values = self.get()
+        if not self.modified_fields:
+            return True
+        values = self._get_on_change_args(self.modified_fields)
         try:
             RPCExecute('model', self.model_name, 'pre_validate', values,
                 main_iteration=False, context=self.context_get())
@@ -373,6 +375,7 @@ class Record(SignalEvent):
             if not fieldinfo.attrs.get('autocomplete'):
                 continue
             self.do_autocomplete(fieldname)
+        return vals
 
     def rec_name(self):
         try:
@@ -414,6 +417,8 @@ class Record(SignalEvent):
     def set_default(self, val, signal=True):
         for fieldname, value in val.items():
             if fieldname not in self.group.fields:
+                continue
+            if fieldname == self.group.exclude_field:
                 continue
             if isinstance(self.group.fields[fieldname], (fields.M2OField,
                         fields.ReferenceField)):
@@ -514,10 +519,11 @@ class Record(SignalEvent):
             scope = values
             for i in arg.split('.'):
                 if i not in scope:
-                    scope = None
                     break
                 scope = scope[i]
-            res[arg] = scope
+            else:
+                res[arg] = scope
+        res['id'] = self.id
         return res
 
     def on_change(self, fieldname, attr):
@@ -616,8 +622,5 @@ class Record(SignalEvent):
             if hasattr(v, 'destroy'):
                 v.destroy()
         super(Record, self).destroy()
-        self.group = None
-        self.value = None
-        self.next = None
         self.destroyed = True
         pool.remove(self)
