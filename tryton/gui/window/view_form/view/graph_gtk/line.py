@@ -1,8 +1,9 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-#This code is inspired by the pycha project (http://www.lorenzogil.com/projects/pycha/)
+#This code is inspired by the pycha project
+#(http://www.lorenzogil.com/projects/pycha/)
 from graph import Graph
-from tryton.common import hex2rgb, float_time_to_text, safe_eval
+from tryton.common import hex2rgb, float_time_to_text
 import locale
 import math
 import cairo
@@ -33,8 +34,8 @@ class Line(Graph):
                 if self.xrange == 0:
                     x = 1.0
 
-                if not bool(safe_eval(yfield2attrs[yfield].get('empty', '1'))) \
-                        and yval == 0:
+                if (not bool(int(yfield2attrs[yfield].get('empty', 1)))
+                        and yval == 0):
                     continue
 
                 point = Point(x, y, xval, yval, xfield, yfield)
@@ -46,19 +47,50 @@ class Line(Graph):
 
     def drawGraph(self, cr, width, height):
         key2fill = {}
+        key2interpolation = {}
         for yfield in self.yfields:
-            key2fill[yfield.get('key', yfield['name'])] = \
-                    bool(safe_eval(yfield.get('fill', '0')))
+            key = yfield.get('key', yfield['name'])
+            key2fill[key] = bool(int(yfield.get('fill', 0)))
+            key2interpolation[key] = yfield.get('interpolation', 'linear')
 
         def preparePath(key):
+            interpolation = key2interpolation[key]
+            points = (p for p in self.points if p.yname == key)
+            zero = 1.0 + self.minyval * self.yscale
             cr.new_path()
-            cr.move_to(self.area.x, self.area.y + self.area.h)
-            for point in self.points:
-                if point.yname == key:
+
+            cr.move_to(self.area.x, zero * self.area.h + self.area.y)
+            if interpolation == 'linear':
+                for point in points:
                     cr.line_to(point.x * self.area.w + self.area.x,
-                            point.y * self.area.h + self.area.y)
-            cr.line_to(self.area.x + self.area.w, self.area.y + self.area.h)
-            cr.move_to(self.area.x, self.area.y + self.area.h)
+                        point.y * self.area.h + self.area.y)
+            else:
+                previous = Point(0, zero, None, None, None, None)
+
+                def breakage(previous, point):
+                    if interpolation == 'constant-center':
+                        return previous.x + ((point.x - previous.x) / 2.0)
+                    elif interpolation == 'constant-left':
+                        return point.x
+                    elif interpolation == 'constant-right':
+                        return previous.x
+                for point in points:
+                    cr.line_to(
+                        breakage(previous, point) * self.area.w + self.area.x,
+                        previous.y * self.area.h + self.area.y)
+                    cr.line_to(
+                        breakage(previous, point) * self.area.w + self.area.x,
+                        point.y * self.area.h + self.area.y)
+                    cr.line_to(point.x * self.area.w + self.area.x,
+                        point.y * self.area.h + self.area.y)
+                    previous = point
+                cr.line_to(breakage(previous,
+                        Point(1, zero, None, None, None, None))
+                    * self.area.w + self.area.x,
+                    previous.y * self.area.h + self.area.y)
+            cr.line_to(self.area.w + self.area.x,
+                zero * self.area.h + self.area.y)
+            cr.move_to(self.area.x, zero * self.area.h + self.area.y)
 
             if key2fill[key]:
                 cr.close_path()
@@ -95,8 +127,8 @@ class Line(Graph):
             cr.move_to(point.x * self.area.w + self.area.x,
                     point.y * self.area.h + self.area.y)
             cr.arc(point.x * self.area.w + self.area.x,
-                    point.y * self.area.h + self.area.y,
-                    3, 0, 2 * math.pi)
+                point.y * self.area.h + self.area.y,
+                3, 0, 2 * math.pi)
             cr.fill()
 
         cr.restore()
@@ -111,13 +143,13 @@ class Line(Graph):
                 cr.move_to(point.x * self.area.w + self.area.x,
                         point.y * self.area.h + self.area.y)
                 cr.arc(point.x * self.area.w + self.area.x,
-                        point.y * self.area.h + self.area.y,
-                        3, 0, 2 * math.pi)
+                    point.y * self.area.h + self.area.y,
+                    3, 0, 2 * math.pi)
                 cr.stroke()
                 cr.set_source_rgb(*self.colorScheme['__highlight'])
                 cr.arc(point.x * self.area.w + self.area.x,
-                        point.y * self.area.h + self.area.y,
-                        3, 0, 2 * math.pi)
+                    point.y * self.area.h + self.area.y,
+                    3, 0, 2 * math.pi)
                 cr.fill()
         cr.restore()
 
@@ -140,8 +172,9 @@ class Line(Graph):
 
         highlight = False
         draw_points = []
-        yfields_float_time = dict([(x.get('key', x['name']), x.get('float_time'))
-            for x in self.yfields if x.get('widget')])
+        yfields_float_time = dict(
+            (x.get('key', x['name']), x.get('float_time'))
+            for x in self.yfields if x.get('widget'))
         for point in self.points:
             if point == nearest[0] and nearest[1] < dia / 100:
                 if not point.highlight:
@@ -201,17 +234,17 @@ class Line(Graph):
         super(Line, self).drawAxis(cr, width, height)
         self.drawLine(cr, 1.0, 0)
 
-    def action(self, window):
-        super(Line, self).action(window)
+    def action(self):
+        super(Line, self).action()
         for point in self.points:
             if point.highlight:
                 ids = self.ids[point.xname]
-                self.action_keyword(ids, window)
+                self.action_keyword(ids)
 
     def YLabels(self):
         ylabels = super(Line, self).YLabels()
         if len([x.get('key', x['name']) for x in self.yfields
-            if x.get('widget')]) == len(self.yfields):
+                    if x.get('widget')]) == len(self.yfields):
             conv = None
             float_time = reduce(lambda x, y: x == y and x or False,
                     [x.get('float_time') for x in self.yfields])

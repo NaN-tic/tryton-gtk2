@@ -24,15 +24,18 @@ class SignalEvent(object):
         return True
 
     def signal_unconnect(self, key, signal=None):
-        if not signal:
+        if signal is None:
             signal = self.__connects.keys()
         else:
             signal = [signal]
         for sig in signal:
             i = 0
             while i < len(self.__connects[sig]):
-                if self.__connects[sig][i][2] == key:
+                if self.__connects[sig][i][2] is key:
                     del self.__connects[sig][i]
                 else:
                     i += 1
         return True
+
+    def destroy(self):
+        self.__connects = {}

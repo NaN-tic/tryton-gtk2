@@ -2,7 +2,6 @@
 #this repository contains the full copyright notices and license terms.
 import gtk
 import gobject
-import pango
 
 
 class CellRendererToggle(gtk.GenericCellRenderer):
@@ -26,6 +25,11 @@ class CellRendererToggle(gtk.GenericCellRenderer):
 
         self.activatable = self._renderer.get_property('activatable')
         self.visible = True
+
+    def set_sensitive(self, value):
+        if hasattr(self._renderer, 'set_sensitive'):
+            return self._renderer.set_sensitive(value)
+        return self._renderer.set_property('sensitive', value)
 
     def do_set_property(self, pspec, value):
         setattr(self, pspec.name, value)
