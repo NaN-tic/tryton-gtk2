@@ -28,6 +28,7 @@ class Wizard(object):
         self.id = None
         self.ids = None
         self.action = None
+        self.action_id = None
         self.direct_print = False
         self.email_print = False
         self.email = False
@@ -46,6 +47,7 @@ class Wizard(object):
     def run(self, action, data, direct_print=False, email_print=False,
             email=None, context=None):
         self.action = action
+        self.action_id = data.get('action_id')
         self.id = data.get('id')
         self.ids = data.get('ids')
         self.model = data.get('model')
@@ -72,6 +74,7 @@ class Wizard(object):
                 ctx['active_id'] = self.id
                 ctx['active_ids'] = self.ids
                 ctx['active_model'] = self.model
+                ctx['action_id'] = self.action_id
                 if self.screen:
                     data = {
                         self.screen_state: self.screen.get_on_change_value(),
@@ -119,12 +122,10 @@ class Wizard(object):
     def destroy(self):
         if self.screen:
             self.screen.destroy()
-            del self.screen
-        del self.widget
 
     def end(self):
         try:
-            RPCExecute('wizard', self.action, 'delete', self.session_id,
+            return RPCExecute('wizard', self.action, 'delete', self.session_id,
                 process_exception=False)
             if self.action == 'ir.module.module.config_wizard':
                 rpc.context_reload()
@@ -295,11 +296,9 @@ class WizardDialog(Wizard, NoModal):
             gtk.DIALOG_DESTROY_WITH_PARENT)
         self.dia.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
         self.dia.set_icon(TRYTON_ICON)
-        if hasattr(self.dia, 'set_deletable'):
-            self.dia.set_deletable(False)
+        self.dia.set_deletable(False)
         self.dia.connect('close', self.close)
         self.dia.connect('response', self.response)
-        self.dia.connect('state-changed', self.state_changed)
 
         self.accel_group = gtk.AccelGroup()
         self.dia.add_accel_group(self.accel_group)
@@ -334,7 +333,7 @@ class WizardDialog(Wizard, NoModal):
         self.dia.show()
         common.center_window(self.dia, self.parent, self.sensible_widget)
 
-    def destroy(self):
+    def destroy(self, action=None):
         super(WizardDialog, self).destroy()
         self.dia.destroy()
         NoModal.destroy(self)
@@ -357,13 +356,19 @@ class WizardDialog(Wizard, NoModal):
                 # Wizard run from a children record so reload parent record
                 ids = [dialog.screen.current_record.id]
             dialog.screen.reload(ids, written=True)
+            if action:
+                dialog.screen.client_action(action)
 
     def end(self):
-        super(WizardDialog, self).end()
-        self.destroy()
+        action = super(WizardDialog, self).end()
+        self.destroy(action=action)
 
     def close(self, widget, event=None):
-        widget.emit_stop_by_name('close')
+        if self.end_state in self.states:
+            self.state = self.end_state
+            self.process()
+        else:
+            widget.emit_stop_by_name('close')
         return True
 
     def show(self):
@@ -371,7 +376,3 @@ class WizardDialog(Wizard, NoModal):
 
     def hide(self):
         self.dia.hide()
-
-    def state_changed(self, widget, state):
-        if self.dia.props.sensitive and state == gtk.STATE_INSENSITIVE:
-            self.process()

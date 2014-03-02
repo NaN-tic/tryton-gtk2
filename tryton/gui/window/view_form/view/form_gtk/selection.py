@@ -29,9 +29,7 @@ class PopdownMixin(object):
         entry.set_model(model)
         entry.set_text_column(0)
         completion = gtk.EntryCompletion()
-        #Only available in PyGTK 2.6 and above.
-        if hasattr(completion, 'set_inline_selection'):
-            completion.set_inline_selection(True)
+        completion.set_inline_selection(True)
         completion.set_model(model)
         entry.child.set_completion(completion)
         if self._selection:
@@ -123,10 +121,6 @@ class Selection(WidgetInterface, SelectionMixin, PopdownMixin):
 
     def set_value(self, record, field):
         field.set_client(record, self.get_value())
-
-    def _menu_sig_default_set(self, reset=False):
-        self.set_value(self.record, self.field)
-        super(Selection, self)._menu_sig_default_set(reset=reset)
 
     def display(self, record, field):
         self.update_selection(record, field)

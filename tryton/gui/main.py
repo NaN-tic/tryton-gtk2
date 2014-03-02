@@ -13,6 +13,8 @@ try:
 except ImportError:
     import json
 import webbrowser
+import threading
+
 import tryton.rpc as rpc
 from tryton.common import RPCExecute, RPCException
 from tryton.config import CONFIG, TRYTON_ICON, get_config_dir
@@ -130,8 +132,7 @@ class Main(object):
         gtk.accel_map_add_entry('<tryton>/Form/Search', gtk.keysyms.F,
             gtk.gdk.CONTROL_MASK)
 
-        if hasattr(gtk, 'accel_map_load'):
-            gtk.accel_map_load(os.path.join(get_config_dir(), 'accel.map'))
+        gtk.accel_map_load(os.path.join(get_config_dir(), 'accel.map'))
 
         self.tooltips = common.Tooltips()
 
@@ -293,8 +294,7 @@ class Main(object):
         text_cell = gtk.CellRendererText()
         global_search_completion.pack_start(text_cell)
         global_search_completion.add_attribute(text_cell, "markup", 1)
-        if hasattr(global_search_completion.props, 'popup_set_width'):
-            global_search_completion.props.popup_set_width = True
+        global_search_completion.props.popup_set_width = True
         self.global_search_entry.set_completion(global_search_completion)
         self.global_search_entry.set_icon_from_stock(gtk.ENTRY_ICON_PRIMARY,
             'gtk-find')
@@ -841,36 +841,48 @@ class Main(object):
         page = self.notebook.get_current_page()
         self.notebook.set_current_page(page - 1)
 
+    def get_preferences(self):
+        rpc.context_reload()
+        try:
+            prefs = RPCExecute('model', 'res.user', 'get_preferences',
+                False)
+        except RPCException:
+            prefs = {}
+        threads = []
+        for target in (
+                common.ICONFACTORY.load_icons,
+                common.MODELACCESS.load_models,
+                common.VIEW_SEARCH.load_searches,
+                ):
+            t = threading.Thread(target=target)
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
+        if prefs and 'language_direction' in prefs:
+            translate.set_language_direction(prefs['language_direction'])
+            CONFIG['client.language_direction'] = \
+                prefs['language_direction']
+        self.sig_win_menu(prefs=prefs)
+        for action_id in prefs.get('actions', []):
+            Action.execute(action_id, {})
+        self.set_title(prefs.get('status_bar', ''))
+        if prefs and 'language' in prefs:
+            translate.setlang(prefs['language'], prefs.get('locale'))
+            if CONFIG['client.lang'] != prefs['language']:
+                self.set_menubar()
+                self.favorite_unset()
+            CONFIG['client.lang'] = prefs['language']
+        CONFIG.save()
+
     def sig_user_preferences(self, widget):
         if not self.close_pages():
             return False
+        Preference(rpc._USER, self.get_preferences)
 
-        def callback():
-            rpc.context_reload()
-            try:
-                prefs = RPCExecute('model', 'res.user', 'get_preferences',
-                    False)
-            except RPCException:
-                prefs = None
-            if prefs and 'language_direction' in prefs:
-                translate.set_language_direction(prefs['language_direction'])
-                CONFIG['client.language_direction'] = \
-                    prefs['language_direction']
-            self.set_title(prefs.get('status_bar', ''))
-            if prefs and 'language' in prefs:
-                translate.setlang(prefs['language'], prefs.get('locale'))
-                if CONFIG['client.lang'] != prefs['language']:
-                    self.set_menubar()
-                    self.favorite_unset()
-                    self.sig_win_menu()
-                CONFIG['client.lang'] = prefs['language']
-            CONFIG.save()
-            self.sig_win_menu()
-        Preference(rpc._USER, callback)
-
-    def sig_win_close(self, widget):
+    def sig_win_close(self, widget=None):
         self._sig_remove_book(widget,
-                self.notebook.get_nth_page(self.notebook.get_current_page()))
+            self.notebook.get_nth_page(self.notebook.get_current_page()))
 
     def sig_login(self, widget=None, res=None):
         if not self.sig_logout(widget, disconnect=False):
@@ -889,31 +901,8 @@ class Main(object):
         except TrytonServerError, exception:
             common.process_exception(exception)
             return
-        rpc.context_reload()
         if log_response > 0:
-            try:
-                prefs = RPCExecute('model', 'res.user', 'get_preferences',
-                    False)
-            except RPCException:
-                prefs = {}
-            common.ICONFACTORY.load_icons()
-            common.MODELACCESS.load_models()
-            common.VIEW_SEARCH.load_searches()
-            if prefs and 'language_direction' in prefs:
-                translate.set_language_direction(prefs['language_direction'])
-                CONFIG['client.language_direction'] = \
-                    prefs['language_direction']
-            self.sig_win_menu(prefs=prefs)
-            for action_id in prefs.get('actions', []):
-                Action.execute(action_id, {})
-            self.set_title(prefs.get('status_bar', ''))
-            if prefs and 'language' in prefs:
-                translate.setlang(prefs['language'], prefs.get('locale'))
-                if CONFIG['client.lang'] != prefs['language']:
-                    self.set_menubar()
-                    self.favorite_unset()
-                CONFIG['client.lang'] = prefs['language']
-            CONFIG.save()
+            self.get_preferences()
         elif log_response == -1:
             common.message(_('Connection error!\n'
                     'Unable to connect to the server!'))
@@ -1109,8 +1098,7 @@ class Main(object):
         CONFIG['client.default_width'] = Main.get_main()._width
         CONFIG['client.default_height'] = Main.get_main()._height
         CONFIG.save()
-        if hasattr(gtk, 'accel_map_save'):
-            gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
+        gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
 
         cls.tryton_client.quit_mainloop()
 
@@ -1205,8 +1193,7 @@ class Main(object):
         label_menu = gtk.Label(page.name)
         label_menu.set_alignment(0.0, 0.5)
         self.notebook.insert_page_menu(page.widget, hbox, label_menu, page_id)
-        if hasattr(self.notebook, 'set_tab_reorderable'):
-            self.notebook.set_tab_reorderable(page.widget, True)
+        self.notebook.set_tab_reorderable(page.widget, True)
         self.notebook.set_current_page(page_id)
 
     def _sig_remove_book(self, widget, page_widget):
@@ -1286,9 +1273,13 @@ class Main(object):
 
         self.current_page = self.notebook.get_current_page()
         current_form = self.get_page(self.current_page)
+
+        def set_cursor():
+            if self.current_page == self.notebook.get_current_page():
+                current_form.set_cursor()
         # Using idle_add because the gtk.TreeView grabs the focus at the
         # end of the event
-        gobject.idle_add(current_form.set_cursor)
+        gobject.idle_add(set_cursor)
         for dialog in current_form.dialogs:
             dialog.show()
 

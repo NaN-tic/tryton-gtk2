@@ -21,18 +21,9 @@ class ViewGraph(ParserView):
         for widget in self.widgets.keys():
             self.widgets[widget].destroy()
             del self.widgets[widget]
-        self.widget = None
-        self.screen = None
-        self.state_widgets = None
-
-    def cancel(self):
-        pass
 
     def set_value(self):
         pass
-
-    def sel_ids_get(self):
-        return []
 
     def reset(self):
         pass

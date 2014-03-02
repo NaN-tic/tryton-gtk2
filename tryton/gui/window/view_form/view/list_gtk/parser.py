@@ -18,7 +18,7 @@ from tryton.gui.window.win_form import WinForm
 from tryton.gui.window.view_form.screen import Screen
 import tryton.rpc as rpc
 from tryton.common import COLORS, node_attributes, \
-        file_selection, file_open
+        file_selection, file_open, slugify
 import tryton.common as common
 from tryton.common.cellrendererbutton import CellRendererButton
 from tryton.common.cellrendererdate import CellRendererDate
@@ -258,6 +258,7 @@ class ParserTree(ParserInterface):
                 string = node_attrs.get('string', _('Unknown'))
                 col = gtk.TreeViewColumn(string, renderer)
                 col.name = None
+                col.set_visible(not node_attrs.get('tree_invisible', False))
 
                 label = gtk.Label(string)
                 label.show()
@@ -606,6 +607,7 @@ class Binary(Char):
         self.renderer.connect('open', self.open_binary)
         self.renderer.connect('save', self.save_binary)
         self.renderer.connect('clear', self.clear_binary)
+        self.last_open_file = None
 
     def get_textual_value(self, record):
         pass
@@ -617,12 +619,36 @@ class Binary(Char):
     @realized
     def setter(self, column, cell, store, iter):
         record = store.get_value(iter, 0)
-        size = record[self.field_name].get_size(record)
+        field = record[self.field_name]
+        if hasattr(field, 'get_size'):
+            size = field.get_size(record)
+        else:
+            size = len(field.get(record))
         cell.set_property('size', common.humanize(size) if size else '')
 
+        states = ('invisible',)
+        if getattr(self.treeview, 'editable', False):
+            states = ('readonly', 'required', 'invisible')
+
+        field.state_set(record, states=states)
+        invisible = field.get_state_attrs(record).get('invisible', False)
+        cell.set_property('visible', not invisible)
+
+        if getattr(self.treeview, 'editable', False):
+            readonly = self.attrs.get('readonly',
+                field.get_state_attrs(record).get('readonly', False))
+            if invisible:
+                readonly = True
+            cell.set_property('editable', not readonly)
+
     def new_binary(self, renderer, path):
-        filename = file_selection(_('Open...'))
         record, field = self._get_record_field(path)
+        filename = ''
+        if self.last_open_file:
+            last_id, last_filename = self.last_open_file
+            if last_id == record.id:
+                filename = last_filename
+        filename = file_selection(_('Open...'), filename=filename)
         if filename:
             field.set_client(record, open(filename, 'rb').read())
             if self.filename:
@@ -635,17 +661,22 @@ class Binary(Char):
         dtemp = tempfile.mkdtemp(prefix='tryton_')
         record, field = self._get_record_field(path)
         filename_field = record.group.fields.get(self.filename)
-        filename = filename_field.get(record).replace(
-            os.sep, '_').replace(os.altsep or os.sep, '_')
+        filename = filename_field.get(record)
         if not filename:
             return
+        root, ext = os.path.splitext(filename)
+        filename = ''.join([slugify(root), os.extsep, slugify(ext)])
         file_path = os.path.join(dtemp, filename)
         with open(file_path, 'wb') as fp:
-            fp.write(field.get_data(record))
+            if hasattr(field, 'get_data'):
+                fp.write(field.get_data(record))
+            else:
+                fp.write(field.get(record))
         root, type_ = os.path.splitext(filename)
         if type_:
             type_ = type_[1:]
         file_open(file_path, type_)
+        self.last_open_file = (record.id, file_path)
 
     def save_binary(self, renderer, path):
         filename = ''
@@ -657,7 +688,10 @@ class Binary(Char):
             action=gtk.FILE_CHOOSER_ACTION_SAVE)
         if filename:
             with open(filename, 'wb') as fp:
-                fp.write(field.get_data(record))
+                if hasattr(field, 'get_data'):
+                    fp.write(field.get_data(record))
+                else:
+                    fp.write(field.get(record))
 
     def clear_binary(self, renderer, path):
         record, field = self._get_record_field(path)
@@ -938,9 +972,7 @@ class Selection(Char, SelectionMixin):
         if hasattr(editable, 'set_text_column'):
             editable.set_text_column(0)
         completion = gtk.EntryCompletion()
-        #Only available in PyGTK 2.6 and above.
-        if hasattr(completion, 'set_inline_selection'):
-            completion.set_inline_selection(True)
+        completion.set_inline_selection(True)
         completion.set_model(model)
         editable.get_child().set_completion(completion)
         completion.set_text_column(0)

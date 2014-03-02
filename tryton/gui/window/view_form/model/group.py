@@ -1,9 +1,6 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
-try:
-    from weakref import WeakSet
-except ImportError:
-    from weakrefset import WeakSet
+from weakref import WeakSet
 
 from record import Record
 from field import Field, O2MField
@@ -419,7 +416,6 @@ class Group(SignalEvent, list):
                 pass
         self.clear()
         super(Group, self).destroy()
-        self.parent = None
 
     def get_by_path(self, path):
         'return record by path'

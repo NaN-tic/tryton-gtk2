@@ -9,13 +9,10 @@ except ImportError:
     import json
 import locale
 from interface import ParserView
-from tryton.action import Action
-from tryton.common import message
 import gettext
 from tryton.config import CONFIG
 from tryton.common.cellrendererbutton import CellRendererButton
 from tryton.common.cellrenderertoggle import CellRendererToggle
-from tryton.pyson import PYSONEncoder
 from tryton.gui.window import Window
 from tryton.common.popup_menu import populate
 from tryton.common import RPCExecute, RPCException
@@ -60,9 +57,6 @@ class AdaptModelGroup(gtk.GenericTreeModel):
                 path = self.on_get_path(record.parent)
                 iter_ = self.get_iter(path)
                 self.row_has_child_toggled(path, iter_)
-
-    def cancel(self):
-        pass
 
     def removed(self, group, record):
         if (group is self.group
@@ -340,6 +334,10 @@ class ViewList(ParserView):
     def get_fields(self):
         return [col.name for col in self.widget_tree.get_columns() if col.name]
 
+    def get_buttons(self):
+        return [b for b in self.state_widgets
+            if isinstance(b.renderer, CellRendererButton)]
+
     def on_keypress(self, widget, event):
         if (event.keyval == gtk.keysyms.c
                 and event.state & gtk.gdk.CONTROL_MASK):
@@ -474,10 +472,21 @@ class ViewList(ParserView):
         if col in columns:
             idx = columns.index(col)
             columns = columns[idx:]
-        record = self.screen.current_record
-        group = record.group
-        idx = group.index(record)
+        if self.screen.current_record:
+            record = self.screen.current_record
+            group = record.group
+            idx = group.index(record)
+        else:
+            group = self.screen.group
+            idx = len(group)
+        default = None
         for line in data:
+            if idx >= len(group):
+                record = group.new(default=False)
+                if default is None:
+                    default = record.default_get()
+                record.set_default(default)
+                group.add(record)
             record = group[idx]
             for col, value in zip(columns, line):
                 cell = self.widget_tree.cells[col.name]
@@ -490,9 +499,6 @@ class ViewList(ParserView):
             if not record.validate():
                 break
             idx += 1
-            if idx >= len(group):
-                # TODO create new record
-                break
         self.screen.current_record = record
         self.screen.display(set_cursor=True)
 
@@ -588,16 +594,19 @@ class ViewList(ParserView):
 
     def __button_press(self, treeview, event):
         if event.button == 3:
-            path = treeview.get_path_at_pos(int(event.x), int(event.y))
+            try:
+                path, col, x, y = treeview.get_path_at_pos(
+                    int(event.x), int(event.y))
+            except TypeError:
+                # Outside row
+                return False
             selection = treeview.get_selection()
             if selection.get_mode() == gtk.SELECTION_SINGLE:
                 model = selection.get_selected()[0]
             elif selection.get_mode() == gtk.SELECTION_MULTIPLE:
                 model = selection.get_selected_rows()[0]
-            if (not path) or not path[0]:
-                return False
-            group = model.group
-            record = group[path[0][0]]
+            record = model.get_value(model.get_iter(path), 0)
+            group = record.group
             menu = gtk.Menu()
             menu.popup(None, None, None, event.button, event.time)
 
@@ -643,35 +652,6 @@ class ViewList(ParserView):
             return True
         return False
 
-    def click_and_relate(self, action, value, path):
-        data = {}
-        context = {}
-        act = action.copy()
-        if not(value):
-            message(_('You must select a record to use the relation!'))
-            return False
-        from tryton.gui.window.view_form.screen import Screen
-        screen = Screen(self.screen.group.fields[
-            path[1].name].attrs['relation'])
-        screen.load([value])
-        encoder = PYSONEncoder()
-        act['domain'] = encoder.encode(screen.current_record.expr_eval(
-            act.get('domain', [])))
-        act['context'] = encoder.encode(screen.current_record.expr_eval(
-            act.get('context', {})))
-        data['model'] = self.screen.model_name
-        data['id'] = value
-        data['ids'] = [value]
-        return Action._exec_action(act, data, context)
-
-    def click_and_action(self, atype, value, path):
-        return Action.exec_keyword(atype, {
-            'model': self.screen.group.fields[
-                path[1].name].attrs['relation'],
-            'id': value or False,
-            'ids': [value],
-            }, alwaysask=True)
-
     def group_list_changed(self, group, signal):
         if self.store is not None:
             if signal[0] == 'record-added':
@@ -679,9 +659,6 @@ class ViewList(ParserView):
             elif signal[0] == 'record-removed':
                 self.store.removed(group, signal[1])
         self.display()
-
-    def cancel(self):
-        pass
 
     def __str__(self):
         return 'ViewList (%d)' % id(self)
@@ -719,9 +696,6 @@ class ViewList(ParserView):
     def destroy(self):
         self.save_width_height()
         self.widget_tree.destroy()
-        self.screen = None
-        self.widget_tree = None
-        self.widget = None
 
     def __sig_switch(self, treeview, path, column):
         if column._type == 'button':
@@ -824,7 +798,7 @@ class ViewList(ParserView):
                     field.state_set(record)
 
     def update_children(self):
-        ids = self.sel_ids_get()
+        selected_records = self.selected_records
         for child in self.children:
             value = 0
             value_selected = 0
@@ -837,7 +811,7 @@ class ViewList(ParserView):
                 field_value = record.fields_get()[child_fieldname].get(record)
                 if field_value is not None:
                     value += field_value
-                    if record.id in ids or not ids:
+                    if record in selected_records or not selected_records:
                         value_selected += field_value
 
             if loaded:
@@ -867,17 +841,7 @@ class ViewList(ParserView):
             if (current_path != path and path not in selected_path) or new:
                 self.widget_tree.set_cursor(path, focus_column, new)
 
-    def sel_ids_get(self):
-        def _func_sel_get(store, path, iter, ids):
-            record = store.on_get_iter(path)
-            if record and record.id >= 0:
-                ids.append(record.id)
-        ids = []
-        sel = self.widget_tree.get_selection()
-        if sel:
-            sel.selected_foreach(_func_sel_get, ids)
-        return ids
-
+    @property
     def selected_records(self):
         def _func_sel_get(store, path, iter, records):
             records.append(store.on_get_iter(path))
