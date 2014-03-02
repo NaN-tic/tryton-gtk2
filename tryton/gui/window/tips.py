@@ -5,19 +5,21 @@ import gtk
 import gettext
 import os
 from tryton.config import CONFIG, TRYTON_ICON, PIXMAPS_DIR
+from tryton.common import get_toplevel_window
 
 _ = gettext.gettext
 
 
 class Tips(object):
 
-    def __init__(self, parent):
+    def __init__(self):
         self.tips = [
             _('''<b>Welcome to Tryton</b>
 
 
 '''),
-            _(u'''<b>Do you know Triton, one of the namesakes for our project?</b>
+            _(
+u'''<b>Do you know Triton, one of the namesakes for our project?</b>
 
 Triton (pronounced /ˈtraɪtən/ TRYE-tən, or as in Greek Τρίτων) is the
 largest moon of the planet Neptune, discovered on October 10, 1846
@@ -40,7 +42,7 @@ You can save any graphs in PNG file with right-click on it.
 '''),
         ]
 
-
+        parent = get_toplevel_window()
         self.win = gtk.Dialog(_('Tips'), parent,
                 gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
         self.win.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
@@ -92,7 +94,7 @@ You can save any graphs in PNG file with right-click on it.
 
         try:
             self.number = int(CONFIG['tip.position'])
-        except Exception:
+        except ValueError:
             self.number = 0
 
         self.tip_set()
@@ -116,5 +118,3 @@ You can save any graphs in PNG file with right-click on it.
     def tip_previous(self, widget):
         self.number -= 1
         self.tip_set()
-
-
