@@ -11,6 +11,8 @@ from tryton.gui.window.win_form import WinForm
 from tryton.config import CONFIG
 from tryton.common.popup_menu import populate
 from tryton.common import RPCExecute, RPCException
+from tryton.common.completion import get_completion, update_completion
+from tryton.common.entry_position import manage_entry_position
 
 _ = gettext.gettext
 
@@ -27,16 +29,25 @@ class Many2One(WidgetInterface):
         self.wid_text.set_property('width-chars', 13)
         self.wid_text.set_property('activates_default', True)
         self.wid_text.connect('key-press-event', self.send_modified)
-        self.wid_text.connect_after('key_press_event', self.sig_key_press)
+        self.wid_text.connect('key_press_event', self.sig_key_press)
         self.wid_text.connect('populate-popup', self._populate_popup)
-        self.wid_text.connect('focus-in-event', lambda x, y: self._focus_in())
         self.wid_text.connect('focus-out-event',
             lambda x, y: self._focus_out())
         self.wid_text.connect_after('changed', self.sig_changed)
+        manage_entry_position(self.wid_text)
         self.changed = True
-        self.wid_text.connect('activate', self.sig_activate)
-        self.wid_text.connect_after('focus-out-event', self.sig_activate)
         self.focus_out = True
+
+        if int(self.attrs.get('completion', 1)):
+            self.wid_completion = get_completion()
+            self.wid_completion.connect('match-selected',
+                self._completion_match_selected)
+            self.wid_completion.connect('action-activated',
+                self._completion_action_activated)
+            self.wid_text.set_completion(self.wid_completion)
+            self.wid_text.connect('changed', self._update_completion)
+        else:
+            self.wid_completion = None
 
         self.but_open = gtk.Button()
         img_find = gtk.Image()
@@ -75,12 +86,28 @@ class Many2One(WidgetInterface):
 
     def _readonly_set(self, value):
         self._readonly = value
-        self.wid_text.set_editable(not value)
-        self.but_new.set_sensitive(not value)
+        self._set_button_sensitive()
         if value:
             self.widget.set_focus_chain([])
         else:
             self.widget.set_focus_chain([self.wid_text])
+
+    def _set_button_sensitive(self):
+        model = self.get_model()
+        if model:
+            access = common.MODELACCESS[model]
+        else:
+            access = {
+                'create': True,
+                'read': True,
+                }
+        self.wid_text.set_editable(not self._readonly)
+        self.but_new.set_sensitive(bool(
+                not self._readonly
+                and self.attrs.get('create', True)
+                and access['create']))
+        self.but_open.set_sensitive(bool(
+                access['read']))
 
     @property
     def modified(self):
@@ -106,7 +133,10 @@ class Many2One(WidgetInterface):
     def id_from_value(value):
         return value
 
-    def sig_activate(self, widget=None, event=None, key_press=False):
+    def sig_activate(self):
+        model = self.get_model()
+        if not model or not common.MODELACCESS[model]['read']:
+            return
         if not self.focus_out or not self.field:
             return
         self.changed = False
@@ -115,13 +145,10 @@ class Many2One(WidgetInterface):
 
         self.focus_out = False
         if model and not self.has_target(value):
-            if not key_press and not event and widget:
-                widget.emit_stop_by_name('activate')
             if (not self._readonly
                     and (self.wid_text.get_text()
-                        or (self.field.get_state_attrs(
-                                self.record)['required'])
-                            and key_press)):
+                        or self.field.get_state_attrs(
+                            self.record)['required'])):
                 domain = self.field.domain_get(self.record)
                 context = self.field.context_get(self.record)
                 self.wid_text.grab_focus()
@@ -143,7 +170,6 @@ class Many2One(WidgetInterface):
                     self.field.set_client(self.record,
                         self.value_from_id(ids[0]), force_change=True)
                     self.focus_out = True
-                    self.display(self.record, self.field)
                     self.changed = True
                     return
 
@@ -151,17 +177,18 @@ class Many2One(WidgetInterface):
                     if result:
                         self.field.set_client(self.record,
                             self.value_from_id(*result[0]), force_change=True)
+                    else:
+                        self.wid_text.set_text('')
                     self.focus_out = True
-                    self.display(self.record, self.field)
                     self.changed = True
 
                 WinSearch(model, callback, sel_multi=False,
                     ids=ids, context=context, domain=domain,
                     view_ids=self.attrs.get('view_ids', '').split(','),
-                    views_preload=self.attrs.get('views', {}))
+                    views_preload=self.attrs.get('views', {}),
+                    new=self.but_new.get_property('sensitive'))
                 return
         self.focus_out = True
-        self.display(self.record, self.field)
         self.changed = True
         return
 
@@ -170,9 +197,13 @@ class Many2One(WidgetInterface):
         context = self.field.context_get(self.record)
         return Screen(self.get_model(), domain=domain, context=context,
             mode=['form'], view_ids=self.attrs.get('view_ids', '').split(','),
-            views_preload=self.attrs.get('views', {}), readonly=self._readonly)
+            views_preload=self.attrs.get('views', {}), readonly=self._readonly,
+            exclude_field=self.attrs.get('relation_field'))
 
     def sig_new(self, *args):
+        model = self.get_model()
+        if not model or not common.MODELACCESS[model]['create']:
+            return
         self.focus_out = False
         screen = self.get_screen()
 
@@ -181,11 +212,13 @@ class Many2One(WidgetInterface):
                 self.field.set_client(self.record,
                     self.value_from_id(screen.current_record.id,
                         screen.current_record.rec_name()))
-                self.display(self.record, self.field)
             self.focus_out = True
         WinForm(screen, callback, new=True, save_current=True)
 
-    def sig_edit(self, widget):
+    def sig_edit(self, *args):
+        model = self.get_model()
+        if not model or not common.MODELACCESS[model]['read']:
+            return
         if not self.focus_out or not self.field:
             return
         self.changed = False
@@ -204,7 +237,6 @@ class Many2One(WidgetInterface):
                             screen.current_record.rec_name()),
                         force_change=True)
                 self.focus_out = True
-                self.display(self.record, self.field)
                 self.changed = True
             WinForm(screen, callback, save_current=True)
             return
@@ -230,7 +262,6 @@ class Many2One(WidgetInterface):
                 self.field.set_client(self.record, self.value_from_id(ids[0]),
                     force_change=True)
                 self.focus_out = True
-                self.display(self.record, self.field)
                 return True
 
             def callback(result):
@@ -238,29 +269,39 @@ class Many2One(WidgetInterface):
                     self.field.set_client(self.record,
                         self.value_from_id(*result[0]), force_change=True)
                 self.focus_out = True
-                self.display(self.record, self.field)
                 self.changed = True
             WinSearch(model, callback, sel_multi=False,
                 ids=ids, context=context, domain=domain,
                 view_ids=self.attrs.get('view_ids', '').split(','),
-                views_preload=self.attrs.get('views', {}))
+                views_preload=self.attrs.get('views', {}),
+                new=self.but_new.get_property('sensitive'))
             return
         self.focus_out = True
-        self.display(self.record, self.field)
         self.changed = True
         return
 
     def sig_key_press(self, widget, event, *args):
         editable = self.wid_text.get_editable()
-        if event.keyval == gtk.keysyms.F3 and editable:
+        activate_keys = [gtk.keysyms.Tab, gtk.keysyms.ISO_Left_Tab]
+        if not self.wid_completion:
+            activate_keys.append(gtk.keysyms.Return)
+        if (event.keyval == gtk.keysyms.F3
+                and editable
+                and self.but_new.get_property('sensitive')):
             self.sig_new(widget, event)
             return True
-        elif event.keyval == gtk.keysyms.F2:
+        elif (event.keyval == gtk.keysyms.F2
+                and self.but_open.get_property('sensitive')):
             self.sig_edit(widget)
             return True
-        elif (event.keyval in (gtk.keysyms.Tab, gtk.keysyms.Return)
+        elif (event.keyval in activate_keys
                 and editable):
-            self.sig_activate(widget, event, key_press=True)
+            self.sig_activate()
+        elif (self.has_target(self.field.get(self.record))
+                and editable
+                and event.keyval in (gtk.keysyms.Delete,
+                    gtk.keysyms.BackSpace)):
+            self.wid_text.set_text('')
         return False
 
     def sig_changed(self, *args):
@@ -269,15 +310,23 @@ class Many2One(WidgetInterface):
         value = self.field.get(self.record)
         if self.has_target(value):
             def clean():
+                text = self.wid_text.get_text()
+                position = self.wid_text.get_position()
                 self.field.set_client(self.record,
                     self.value_from_id(None, ''))
-                self.display(self.record, self.field)
+                # Restore text and position after display
+                self.wid_text.set_text(text)
+                self.wid_text.set_position(position)
             gobject.idle_add(clean)
         return False
 
+    def get_value(self):
+        return self.wid_text.get_text()
+
     def set_value(self, record, field):
-        # Simulate a focus-out
-        self.sig_activate()
+        if field.get_client(record) != self.wid_text.get_text():
+            field.set_client(record, self.value_from_id(None, ''))
+            self.wid_text.set_text('')
 
     def set_text(self, value):
         if not value:
@@ -288,6 +337,9 @@ class Many2One(WidgetInterface):
     def display(self, record, field):
         self.changed = False
         super(Many2One, self).display(record, field)
+
+        self._set_button_sensitive()
+
         if not field:
             self.wid_text.set_text('')
             self.wid_text.set_position(0)
@@ -312,3 +364,30 @@ class Many2One(WidgetInterface):
             gobject.idle_add(populate, menu, self.get_model(),
                 self.id_from_value(value))
         return True
+
+    def _completion_match_selected(self, completion, model, iter_):
+        rec_name, record_id = model.get(iter_, 0, 1)
+        self.field.set_client(self.record,
+            self.value_from_id(record_id, rec_name), force_change=True)
+
+        completion_model = self.wid_completion.get_model()
+        completion_model.clear()
+        completion_model.search_text = self.wid_text.get_text()
+        return True
+
+    def _update_completion(self, widget):
+        if self._readonly:
+            return
+        if not self.record:
+            return
+        id_ = self.id_from_value(self.field.get(self.record))
+        if id_ is not None and id_ >= 0:
+            return
+        model = self.get_model()
+        update_completion(self.wid_text, self.record, self.field, model)
+
+    def _completion_action_activated(self, completion, index):
+        if index == 0:
+            self.sig_edit()
+        elif index == 1:
+            self.sig_new()

@@ -10,6 +10,7 @@ import gettext
 from tryton.signal_event import SignalEvent
 from tryton.gui.window.win_form import WinForm
 from tryton.common import RPCExecute, RPCException
+from tryton.action import Action as GenericAction
 _ = gettext.gettext
 
 
@@ -17,12 +18,12 @@ class Action(SignalEvent):
 
     def __init__(self, attrs=None, context=None):
         super(Action, self).__init__()
-        self.act_id = int(attrs['name'])
+        self.name = attrs['name']
         self.context = context or {}
 
         try:
-            self.action = RPCExecute('model', 'ir.action.act_window', 'read',
-                self.act_id, False)
+            self.action = RPCExecute('model', 'ir.action.act_window', 'get',
+                self.name)
         except RPCException:
             raise
 
@@ -92,12 +93,20 @@ class Action(SignalEvent):
         if not self.screen.current_record:
             return
 
-        def callback(result):
-            if result:
-                self.screen.current_record.save()
-            else:
-                self.screen.current_record.cancel()
-        WinForm(self.screen, callback)
+        if (self.screen.current_view.view_type == 'tree' and
+                self.screen.current_view.widget_tree.keyword_open):
+            GenericAction.exec_keyword('tree_open', {
+                'model': self.screen.model_name,
+                'id': self.screen.id_get(),
+                'ids': [self.screen.id_get()],
+                }, context=self.screen.context.copy(), warning=False)
+        else:
+            def callback(result):
+                if result:
+                    self.screen.current_record.save()
+                else:
+                    self.screen.current_record.cancel()
+            WinForm(self.screen, callback)
 
     def set_value(self, mode, model_field):
         self.screen.current_view.set_value()
@@ -111,7 +120,7 @@ class Action(SignalEvent):
 
     def _get_active(self):
         if self.screen and self.screen.current_record:
-            return common.EvalEnvironment(self.screen.current_record, False)
+            return common.EvalEnvironment(self.screen.current_record)
 
     active = property(_get_active)
 
@@ -121,7 +130,7 @@ class Action(SignalEvent):
         domain_ctx['_user'] = rpc._USER
         for action in actions:
             if action.active:
-                domain_ctx['_active_%s' % action.act_id] = action.active
+                domain_ctx[action.name] = action.active
         new_domain = PYSONDecoder(domain_ctx).decode(
                 self.action['pyson_domain'])
         if self.domain == new_domain:
@@ -129,4 +138,6 @@ class Action(SignalEvent):
         del self.domain[:]
         self.domain.extend(new_domain)
         if hasattr(self, 'screen'):  # Catch early update
-            self.display()
+            # Using idle_add to prevent corruption of the event who triggered
+            # the update.
+            gtk.idle_add(self.display)

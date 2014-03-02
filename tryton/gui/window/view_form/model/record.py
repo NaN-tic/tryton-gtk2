@@ -7,6 +7,7 @@ from tryton.pyson import PYSONDecoder
 import field as fields
 from functools import reduce
 from tryton.common import RPCExecute, RPCException
+from tryton.config import CONFIG
 
 
 class Record(SignalEvent):
@@ -55,31 +56,7 @@ class Record(SignalEvent):
                         break
             else:
                 loading = self.group.fields[name].attrs.get('loading', 'eager')
-            if self in self.group and loading == 'eager':
-                idx = self.group.index(self)
-                length = len(self.group)
-                n = 1
-                while len(id2record) < 80 and (idx - n >= 0 or \
-                        idx + n < length) and n < 100:
-                    if idx - n >= 0:
-                        record = self.group[idx - n]
-                        if name not in record._loaded and record.id >= 0:
-                            id2record[record.id] = record
-                    if idx + n < length:
-                        record = self.group[idx + n]
-                        if name not in record._loaded and record.id >= 0:
-                            id2record[record.id] = record
-                    n += 1
-            record_context = self.context_get()
-            if loading == 'eager' and len(id2record) < 80:
-                for record in self.pool:
-                    if (name not in record._loaded
-                            and record.id >= 0
-                            and record.id not in id2record
-                            and record.context_get() == record_context):
-                        id2record[record.id] = record
-                        if len(id2record) == 80:
-                            break
+
             if loading == 'eager':
                 fnames = [fname
                     for fname, field in self.group.fields.iteritems()
@@ -93,6 +70,47 @@ class Record(SignalEvent):
             if 'rec_name' not in fnames:
                 fnames.append('rec_name')
             fnames.append('_timestamp')
+
+            record_context = self.context_get()
+            if loading == 'eager':
+                limit = CONFIG['client.limit']
+                if not self.parent:
+                    # If not a children no need to load too much
+                    limit = int(limit / len(fnames))
+
+                def filter_group(record):
+                    return name not in record._loaded and record.id >= 0
+
+                def filter_pool(record):
+                    return (filter_group(record)
+                        and record.id not in id2record
+                        and record.context_get() == record_context)
+
+                if self.parent:
+                    pool = list(self.pool)
+                else:
+                    # Don't look at the pool if it is the root
+                    pool = []
+                for group, filter_ in (
+                        (self.group, filter_group),
+                        (pool, filter_pool),
+                        ):
+                    if self in group:
+                        idx = group.index(self)
+                        length = len(group)
+                        n = 1
+                        while len(id2record) < limit and (idx - n >= 0
+                                or idx + n < length) and n < 2 * limit:
+                            if idx - n >= 0:
+                                record = group[idx - n]
+                                if filter_(record):
+                                    id2record[record.id] = record
+                            if idx + n < length:
+                                record = group[idx + n]
+                                if filter_(record):
+                                    id2record[record.id] = record
+                            n += 1
+
             ctx = record_context.copy()
             ctx.update(dict(('%s.%s' % (self.model_name, fname), 'size')
                     for fname, field in self.group.fields.iteritems()
@@ -109,17 +127,14 @@ class Record(SignalEvent):
                     value.update(default_values)
                 self.exception = True
             id2value = dict((value['id'], value) for value in values)
-            if len(id2record) > 1:
-                for id, record in id2record.iteritems():
-                    if not record.exception:
-                        record.exception = bool(exception)
-                    value = id2value.get(id)
-                    if record and not record.destroyed and value:
-                        record.set(value, signal=False)
-            else:
-                value = id2value.get(self.id)
-                if value:
-                    self.set(value, signal=False)
+            for id, record in id2record.iteritems():
+                if not record.exception:
+                    record.exception = bool(exception)
+                value = id2value.get(id)
+                if record and not record.destroyed and value:
+                    for key in record.modified_fields:
+                        value.pop(key, None)
+                    record.set(value, signal=False)
         return self.group.fields.get(name, False)
 
     def __repr__(self):
@@ -158,14 +173,13 @@ class Record(SignalEvent):
         if value:
             self.signal('record-modified')
 
-    def children_group(self, field_name, check_load=True):
+    def children_group(self, field_name):
         if not field_name:
             return []
-        if check_load:
-            self._check_load([field_name])
+        self._check_load([field_name])
         group = self.value.get(field_name)
         if group is None:
-            return []
+            return None
 
         if id(group.fields) != id(self.group.fields):
             self.group.fields.update(group.fields)
@@ -223,50 +237,36 @@ class Record(SignalEvent):
 
     def get_loaded(self, fields=None):
         if fields:
-            return set(fields) <= self._loaded
+            return set(fields) <= (self._loaded | set(self.modified_fields))
         return set(self.group.fields.keys()) == self._loaded
 
     loaded = property(get_loaded)
 
-    def get(self, get_readonly=True, includeid=False, check_load=True,
-            get_modifiedonly=False):
-        if check_load:
-            self._check_load()
-        value = []
+    def get(self):
+        value = {}
         for name, field in self.group.fields.iteritems():
             if field.attrs.get('readonly'):
                 continue
-            if (field.get_state_attrs(self).get('readonly', False)
-                    and not get_readonly):
+            if field.name not in self.modified_fields and self.id >= 0:
                 continue
-            if (field.name not in self.modified_fields
-                    and get_modifiedonly):
-                continue
-            value.append((name, field.get(self, check_load=check_load,
-                readonly=get_readonly, modified=get_modifiedonly)))
-        value = dict(value)
-        if includeid:
-            value['id'] = self.id
+            value[name] = field.get(self)
         return value
 
-    def get_eval(self, check_load=True):
-        if check_load:
-            self._check_load()
+    def get_eval(self):
         value = {}
         for name, field in self.group.fields.iteritems():
             if name not in self._loaded and self.id >= 0:
                 continue
-            value[name] = field.get_eval(self, check_load=check_load)
+            value[name] = field.get_eval(self)
         value['id'] = self.id
         return value
 
-    def get_on_change_value(self, check_load=True):
-        if check_load:
-            self._check_load()
+    def get_on_change_value(self):
         value = {}
         for name, field in self.group.fields.iteritems():
-            value[name] = field.get_on_change_value(self,
-                check_load=check_load)
+            if name not in self._loaded and self.id >= 0:
+                continue
+            value[name] = field.get_on_change_value(self)
         value['id'] = self.id
         return value
 
@@ -280,13 +280,24 @@ class Record(SignalEvent):
             result.update(field.get_timestamp(self))
         return result
 
+    def pre_validate(self):
+        if not self.modified_fields:
+            return True
+        values = self._get_on_change_args(self.modified_fields)
+        try:
+            RPCExecute('model', self.model_name, 'pre_validate', values,
+                main_iteration=False, context=self.context_get())
+        except RPCException:
+            return False
+        return True
+
     def save(self, force_reload=True):
         if self.id < 0 or self.modified:
             if self.id < 0:
-                value = self.get(get_readonly=True)
+                value = self.get()
                 try:
-                    res = RPCExecute('model', self.model_name, 'create', value,
-                        main_iteration=False,
+                    res, = RPCExecute('model', self.model_name, 'create',
+                        [value], main_iteration=False,
                         context=self.context_get())
                 except RPCException:
                     return False
@@ -294,18 +305,15 @@ class Record(SignalEvent):
                 self.id = res
                 self.group.id_changed(old_id)
             elif self.modified:
-                self._check_load()
-                value = self.get(get_readonly=True, get_modifiedonly=True,
-                        check_load=False)
+                value = self.get()
                 if value:
                     context = self.context_get()
                     context = context.copy()
                     context['_timestamp'] = self.get_timestamp()
                     try:
-                        if not RPCExecute('model', self.model_name, 'write',
-                                [self.id], value, main_iteration=False,
-                                context=context):
-                            return False
+                        RPCExecute('model', self.model_name, 'write',
+                            [self.id], value, main_iteration=False,
+                            context=context)
                     except RPCException:
                         return False
             self._loaded.clear()
@@ -320,7 +328,7 @@ class Record(SignalEvent):
         return self.id
 
     @staticmethod
-    def delete(records, context=None):
+    def delete(records):
         if not records:
             return
         record = records[0]
@@ -329,7 +337,6 @@ class Record(SignalEvent):
         assert all(r.group.root_group == root_group for r in records)
         records = [r for r in records if r.id >= 0]
         ctx = {}
-        ctx.update(context or {})
         ctx['_timestamp'] = {}
         for rec in records:
             ctx['_timestamp'].update(rec.get_timestamp())
@@ -346,30 +353,35 @@ class Record(SignalEvent):
             root_group.reload(reload_ids)
         return True
 
-    def default_get(self, domain=None, context=None):
+    def default_get(self):
         if len(self.group.fields):
             try:
                 vals = RPCExecute('model', self.model_name, 'default_get',
                     self.group.fields.keys(), main_iteration=False,
-                    context=context)
+                    context=self.context_get())
             except RPCException:
                 return
             if (self.parent
-                    and self.parent_name in self.group.fields
-                    and (self.group.fields[self.parent_name].attrs['relation']
-                        == self.group.parent.model_name)):
-                vals[self.parent_name] = self.parent.id
+                    and self.parent_name in self.group.fields):
+                parent_field = self.group.fields[self.parent_name]
+                if isinstance(parent_field, fields.ReferenceField):
+                    vals[self.parent_name] = (
+                        self.parent.model_name, self.parent.id)
+                elif (self.group.fields[self.parent_name].attrs['relation']
+                        == self.group.parent.model_name):
+                    vals[self.parent_name] = self.parent.id
             self.set_default(vals)
         for fieldname, fieldinfo in self.group.fields.iteritems():
             if not fieldinfo.attrs.get('autocomplete'):
                 continue
             self.do_autocomplete(fieldname)
+        return vals
 
     def rec_name(self):
         try:
-            return RPCExecute('model', self.model_name, 'read', self.id,
+            return RPCExecute('model', self.model_name, 'read', [self.id],
                 ['rec_name'], main_iteration=False,
-                context=self.context_get())['rec_name']
+                context=self.context_get())[0]['rec_name']
         except RPCException:
             return ''
 
@@ -380,7 +392,7 @@ class Record(SignalEvent):
             self._check_load()
         res = True
         for field_name, field in self.group.fields.iteritems():
-            if fields and field_name not in fields:
+            if fields is not None and field_name not in fields:
                 continue
             if field.get_state_attrs(self).get('readonly', False):
                 continue
@@ -402,9 +414,11 @@ class Record(SignalEvent):
     def context_get(self):
         return self.group.context
 
-    def set_default(self, val, signal=True, modified=False):
+    def set_default(self, val, signal=True):
         for fieldname, value in val.items():
             if fieldname not in self.group.fields:
+                continue
+            if fieldname == self.group.exclude_field:
                 continue
             if isinstance(self.group.fields[fieldname], (fields.M2OField,
                         fields.ReferenceField)):
@@ -413,14 +427,13 @@ class Record(SignalEvent):
                     self.value[field_rec_name] = val[field_rec_name]
                 elif field_rec_name in self.value:
                     del self.value[field_rec_name]
-            self.group.fields[fieldname].set_default(self, value,
-                modified=modified)
+            self.group.fields[fieldname].set_default(self, value)
             self._loaded.add(fieldname)
         self.validate(softvalidation=True)
         if signal:
             self.signal('record-changed')
 
-    def set(self, val, modified=False, signal=True):
+    def set(self, val, signal=True):
         later = {}
         for fieldname, value in val.iteritems():
             if fieldname == '_timestamp':
@@ -440,16 +453,38 @@ class Record(SignalEvent):
                     self.value[field_rec_name] = val[field_rec_name]
                 elif field_rec_name in self.value:
                     del self.value[field_rec_name]
-            self.group.fields[fieldname].set(self, value, modified=False)
+            self.group.fields[fieldname].set(self, value)
             self._loaded.add(fieldname)
         for fieldname, value in later.iteritems():
-            self.group.fields[fieldname].set(self, value, modified=False)
+            self.group.fields[fieldname].set(self, value)
             self._loaded.add(fieldname)
-        if modified:
-            self.modified_fields.update(dict((x, None) for x in val))
-            self.signal('record-modified')
         if signal:
             self.signal('record-changed')
+
+    def set_on_change(self, values):
+        later = {}
+        for fieldname, value in values.items():
+            if fieldname not in self.group.fields:
+                continue
+            if isinstance(self.group.fields[fieldname], fields.O2MField):
+                later[fieldname] = value
+                continue
+            if isinstance(self.group.fields[fieldname], (fields.M2OField,
+                        fields.ReferenceField)):
+                field_rec_name = fieldname + '.rec_name'
+                if field_rec_name in values:
+                    self.value[field_rec_name] = values[field_rec_name]
+                elif field_rec_name in self.value:
+                    del self.value[field_rec_name]
+            self.group.fields[fieldname].set_on_change(self, value)
+        for fieldname, value in later.items():
+            # on change recursion checking is done only for x2many
+            field_x2many = self.group.fields[fieldname]
+            try:
+                field_x2many.in_on_change = True
+                field_x2many.set_on_change(self, value)
+            finally:
+                field_x2many.in_on_change = False
 
     def reload(self, fields=None):
         if self.id < 0:
@@ -461,37 +496,34 @@ class Record(SignalEvent):
                 self[field]
         self.validate(fields or [])
 
-    def expr_eval(self, expr, check_load=False):
+    def expr_eval(self, expr):
         if not isinstance(expr, basestring):
             return expr
-        if check_load:
-            self._check_load()
         ctx = rpc.CONTEXT.copy()
         ctx['context'] = ctx.copy()
         ctx['context'].update(self.context_get())
-        for name, field in self.group.fields.items():
-            ctx[name] = field.get_eval(self, check_load=check_load)
-
+        ctx.update(self.get_eval())
+        ctx['active_model'] = self.model_name
         ctx['active_id'] = self.id
-        ctx['id'] = self.id  # Force local id
         ctx['_user'] = rpc._USER
         if self.parent and self.parent_name:
             ctx['_parent_' + self.parent_name] = \
-                    common.EvalEnvironment(self.parent, check_load)
+                common.EvalEnvironment(self.parent)
         val = PYSONDecoder(ctx).decode(expr)
         return val
 
     def _get_on_change_args(self, args):
         res = {}
-        values = common.EvalEnvironment(self, True, 'on_change')
+        values = common.EvalEnvironment(self, 'on_change')
         for arg in args:
             scope = values
             for i in arg.split('.'):
                 if i not in scope:
-                    scope = False
                     break
                 scope = scope[i]
-            res[arg] = scope
+            else:
+                res[arg] = scope
+        res['id'] = self.id
         return res
 
     def on_change(self, fieldname, attr):
@@ -504,29 +536,7 @@ class Record(SignalEvent):
                 context=self.context_get())
         except RPCException:
             return
-        later = {}
-        for fieldname, value in res.items():
-            if fieldname not in self.group.fields:
-                continue
-            if isinstance(self.group.fields[fieldname], fields.O2MField):
-                later[fieldname] = value
-                continue
-            if isinstance(self.group.fields[fieldname], (fields.M2OField,
-                        fields.ReferenceField)):
-                field_rec_name = fieldname + '.rec_name'
-                if field_rec_name in res:
-                    self.value[field_rec_name] = res[field_rec_name]
-                elif field_rec_name in self.value:
-                    del self.value[field_rec_name]
-            self.group.fields[fieldname].set_on_change(self, value)
-        for fieldname, value in later.items():
-            # on change recursion checking is done only for x2many
-            field_x2many = self.group.fields[fieldname]
-            try:
-                field_x2many.in_on_change = True
-                field_x2many.set_on_change(self, value)
-            finally:
-                field_x2many.in_on_change = False
+        self.set_on_change(res)
 
     def on_change_with(self, field_name):
         fieldnames = set()
@@ -554,12 +564,11 @@ class Record(SignalEvent):
         if fieldnames:
             try:
                 result = RPCExecute('model', self.model_name, 'on_change_with',
-                    list(fieldnames), values, main_iteration=False,
+                    values, list(fieldnames), main_iteration=False,
                     context=self.context_get())
             except RPCException:
                 return
-            for fieldname, value in result.items():
-                self.group.fields[fieldname].set_on_change(self, value)
+            self.set_on_change(result)
         for fieldname in later:
             on_change_with = self.group.fields[fieldname].attrs.get(
                     'on_change_with')
@@ -613,8 +622,5 @@ class Record(SignalEvent):
             if hasattr(v, 'destroy'):
                 v.destroy()
         super(Record, self).destroy()
-        self.group = None
-        self.value = None
-        self.next = None
         self.destroyed = True
         pool.remove(self)

@@ -6,6 +6,7 @@ import gobject
 import gtk
 from interface import WidgetInterface, TranslateMixin
 from tryton.common import Tooltips
+from tryton.common.entry_position import manage_entry_position
 
 _ = gettext.gettext
 
@@ -15,7 +16,6 @@ class Char(WidgetInterface, TranslateMixin):
 
     def __init__(self, field_name, model_name, attrs=None):
         super(Char, self).__init__(field_name, model_name, attrs=attrs)
-        self._default_value = ''
 
         self.widget = gtk.HBox()
         self.autocomplete = bool(attrs.get('autocomplete'))
@@ -34,13 +34,14 @@ class Char(WidgetInterface, TranslateMixin):
             focus_entry = self.entry
 
         focus_entry.set_property('activates_default', True)
-        focus_entry.set_width_chars(10)
-        focus_entry.set_max_length(int(attrs.get('size', 0)))
         focus_entry.connect('activate', self.sig_activate)
-        focus_entry.connect('focus-in-event', lambda x, y: self._focus_in())
         focus_entry.connect('focus-out-event', lambda x, y: self._focus_out())
         focus_entry.connect('key-press-event', self.send_modified)
-        self.widget.pack_start(self.entry)
+        manage_entry_position(focus_entry)
+        expand, fill = True, True
+        if attrs.get('size'):
+            expand, fill = False, False
+        self.widget.pack_start(self.entry, expand=expand, fill=fill)
 
         self.button = None
         if attrs.get('translate'):
@@ -50,8 +51,10 @@ class Char(WidgetInterface, TranslateMixin):
     def translate_widget(self):
         entry = gtk.Entry()
         entry.set_property('activates_default', True)
-        entry.set_width_chars(10)
-        entry.set_max_length(int(self.attrs.get('size', 0)))
+        if self.record:
+            field_size = self.record.expr_eval(self.attrs.get('size'))
+            entry.set_width_chars(field_size or -1)
+            entry.set_max_length(field_size or 0)
         return entry
 
     @staticmethod
@@ -79,14 +82,17 @@ class Char(WidgetInterface, TranslateMixin):
     def modified(self):
         if self.record and self.field:
             entry = self.entry.get_child() if self.autocomplete else self.entry
-            value = entry.get_text() or self._default_value
+            value = entry.get_text() or ''
             return self.field.get_client(self.record) != value
         return False
 
     def set_value(self, record, field):
         entry = self.entry.get_child() if self.autocomplete else self.entry
-        value = entry.get_text() or self._default_value
+        value = entry.get_text() or ''
         return field.set_client(record, value)
+
+    def get_value(self):
+        return self.entry.get_text()
 
     def display(self, record, field):
         super(Char, self).display(record, field)
@@ -99,6 +105,20 @@ class Char(WidgetInterface, TranslateMixin):
                     self.entry_store.append((row,))
         elif self.autocomplete:
             self.entry_store.clear()
+
+        # Set size
+        if self.autocomplete:
+            size_entry = self.entry.get_child()
+        else:
+            size_entry = self.entry
+        if record:
+            field_size = record.expr_eval(self.attrs.get('size'))
+            size_entry.set_width_chars(field_size or -1)
+            size_entry.set_max_length(field_size or 0)
+        else:
+            size_entry.set_width_chars(-1)
+            size_entry.set_max_length(0)
+
         if not field:
             value = ''
         else:

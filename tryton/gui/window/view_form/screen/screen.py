@@ -1,32 +1,47 @@
 #This file is part of Tryton.  The COPYRIGHT file at the top level of
 #this repository contains the full copyright notices and license terms.
 "Screen"
+import copy
 import gobject
+import datetime
+import calendar
 try:
     import simplejson as json
 except ImportError:
     import json
 import collections
+import urllib
+import urlparse
 import xml.dom.minidom
-import tryton.rpc as rpc
+import gettext
+import logging
+
 from tryton.gui.window.view_form.model.group import Group
-from tryton.gui.window.view_form.model.record import Record
 from tryton.gui.window.view_form.view.screen_container import ScreenContainer
 from tryton.signal_event import SignalEvent
 from tryton.config import CONFIG
 from tryton.exceptions import TrytonServerError, TrytonServerUnavailable
 from tryton.jsonrpc import JSONEncoder
 from tryton.common.domain_parser import DomainParser
-from tryton.common import RPCExecute, RPCException
+from tryton.common import RPCExecute, RPCException, MODELACCESS, \
+    node_attributes, sur
+from tryton.action import Action
+import tryton.rpc as rpc
+
+_ = gettext.gettext
 
 
 class Screen(SignalEvent):
     "Screen"
 
+    # Width of tree columns per model
+    # It is shared with all connection but it is the price for speed.
+    tree_column_width = collections.defaultdict(lambda: {})
+
     def __init__(self, model_name, view_ids=None, mode=None, context=None,
             views_preload=None, domain=None, row_activate=None, limit=None,
-            readonly=False, exclude_field=None, sort=None, search_value=None,
-            alternate_view=False):
+            readonly=False, exclude_field=None, order=None, search_value=None,
+            tab_domain=None, alternate_view=False):
         if view_ids is None:
             view_ids = []
         if mode is None:
@@ -38,17 +53,20 @@ class Screen(SignalEvent):
         if domain is None:
             domain = []
 
-        self.limit = limit or int(CONFIG['client.limit'])
+        self.limit = limit or CONFIG['client.limit']
         self.offset = 0
         super(Screen, self).__init__()
 
         self.readonly = readonly
+        if not MODELACCESS[model_name]['write']:
+            self.readonly = True
         self.search_count = 0
         if not row_activate:
             self.row_activate = self.default_row_activate
         else:
             self.row_activate = row_activate
         self.domain = domain
+        self.size_limit = None
         self.views_preload = views_preload
         self.model_name = model_name
         self.context = context
@@ -58,30 +76,26 @@ class Screen(SignalEvent):
         self.parent_name = None
         self.exclude_field = exclude_field
         self.filter_widget = None
+        self.tree_states = collections.defaultdict(
+            lambda: collections.defaultdict(lambda: None))
+        self.tree_states_done = set()
         self.__group = None
         self.new_group()
         self.__current_record = None
         self.current_record = None
-        self.screen_container = ScreenContainer()
+        self.screen_container = ScreenContainer(tab_domain)
         self.screen_container.alternate_view = alternate_view
         self.widget = self.screen_container.widget_get()
         self.__current_view = 0
         self.search_value = search_value
         self.fields_view_tree = None
-        self.sort = sort
+        self.order = order
         self.view_to_load = []
-        self.expanded_nodes = collections.defaultdict(
-            lambda: collections.defaultdict(lambda: None))
         self.domain_parser = None
-
-        if mode:
-            self.view_to_load = mode[1:]
-            view_id = False
-            if self.view_ids:
-                view_id = self.view_ids.pop(0)
-            view = self.add_view_id(view_id, mode[0])
-            self.screen_container.set(view.widget)
-        self.display()
+        self.pre_validate = False
+        self.view_to_load = mode[:]
+        if view_ids or mode:
+            self.switch_view()
 
     def __repr__(self):
         return '<Screen %s at %s>' % (self.model_name, id(self))
@@ -96,16 +110,41 @@ class Screen(SignalEvent):
                 except RPCException:
                     return
 
-            fields = self.fields_view_tree['fields']
-            for name, props in fields.iteritems():
-                if props['type'] not in ('selection', 'reference'):
-                    continue
-                if isinstance(props['selection'], (tuple, list)):
-                    continue
-                props['selection'] = self.get_selection(props)
+            if not self.domain_parser:
+                fields = copy.deepcopy(self.fields_view_tree['fields'])
+                for name, props in fields.iteritems():
+                    if props['type'] not in ('selection', 'reference'):
+                        continue
+                    if isinstance(props['selection'], (tuple, list)):
+                        continue
+                    props['selection'] = self.get_selection(props)
 
-            self.domain_parser = DomainParser(
-                self.fields_view_tree['fields'])
+                # Filter only fields in XML view
+                xml_dom = xml.dom.minidom.parseString(
+                    self.fields_view_tree['arch'])
+                root_node, = xml_dom.childNodes
+                xml_fields = [node_attributes(node).get('name')
+                    for node in root_node.childNodes
+                    if node.nodeName == 'field']
+                fields = collections.OrderedDict(
+                    (name, fields[name]) for name in xml_fields)
+                for name, string, type_ in (
+                        ('id', _('ID'), 'integer'),
+                        ('create_uid', _('Creation User'), 'many2one'),
+                        ('create_date', _('Creation Date'), 'datetime'),
+                        ('write_uid', _('Modification User'), 'many2one'),
+                        ('write_date', _('Modification Date'), 'datetime'),
+                        ):
+                    if name not in fields:
+                        fields[name] = {
+                            'string': string.decode('utf-8'),
+                            'name': name,
+                            'type': type_,
+                            }
+                        if type_ == 'datetime':
+                            fields[name]['format'] = '"%H:%M:%S"'
+
+                self.domain_parser = DomainParser(fields)
 
             self.screen_container.set_screen(self)
             self.screen_container.show_filter()
@@ -114,8 +153,13 @@ class Screen(SignalEvent):
 
     def get_selection(self, props):
         try:
-            selection = RPCExecute('model', self.model_name,
-                props['selection'])
+            change_with = props.get('selection_change_with')
+            if change_with:
+                selection = RPCExecute('model', self.model_name,
+                    props['selection'], dict((p, None) for p in change_with))
+            else:
+                selection = RPCExecute('model', self.model_name,
+                    props['selection'])
         except RPCException:
             selection = []
         selection.sort(lambda x, y: cmp(x[1], y[1]))
@@ -149,9 +193,20 @@ class Screen(SignalEvent):
                 domain = ['AND', domain, self.domain]
         else:
             domain = self.domain
+
+        if self.current_view.view_type == 'calendar':
+            if domain:
+                domain = ['AND', domain, self.current_view.current_domain()]
+            else:
+                domain = self.current_view.current_domain()
+
+        tab_domain = self.screen_container.get_tab_domain()
+        if tab_domain:
+            domain = ['AND', domain, tab_domain]
+
         try:
             ids = RPCExecute('model', self.model_name, 'search', domain,
-                self.offset, self.limit, self.sort, context=self.context)
+                self.offset, self.limit, self.order, context=self.context)
         except RPCException:
             ids = []
         if not only_ids:
@@ -184,6 +239,7 @@ class Screen(SignalEvent):
             self.group.signal_unconnect(self)
             for name, field in self.group.fields.iteritems():
                 fields[name] = field.attrs
+        self.tree_states_done.clear()
         self.__group = group
         self.parent = group.parent
         self.parent_name = group.parent_name
@@ -222,7 +278,8 @@ class Screen(SignalEvent):
         self.signal('record-modified')
 
     def _group_changed(self, group, record):
-        self.display()
+        if not self.parent:
+            self.display()
 
     def __get_current_record(self):
         if (self.__current_record is not None
@@ -263,20 +320,12 @@ class Screen(SignalEvent):
         return False
 
     def destroy(self):
-        self.save_tree_state()
         self.group.destroy()
         for view in self.views:
             view.destroy()
         super(Screen, self).destroy()
-        self.parent = None
-        self.__group = None
-        self.__current_record = None
-        self.screen_container = None
-        self.widget = None
 
     def default_row_activate(self):
-        from tryton.action import Action
-
         if (self.current_view.view_type == 'tree' and
                 self.current_view.widget_tree.keyword_open):
             return Action.exec_keyword('tree_open', {
@@ -288,21 +337,27 @@ class Screen(SignalEvent):
             self.switch_view(view_type='form')
             return True
 
-    def switch_view(self, view_type=None, default=True, context=None):
-        if not self.parent and self.modified():
-            return
-        self.current_view.set_value()
-        if (self.current_record and
-                self.current_record not in self.current_record.group):
-            self.current_record = None
-        fields = self.current_view.get_fields()
-        if self.current_record and not self.current_record.validate(fields):
-            self.screen_container.set(self.current_view.widget)
-            self.set_cursor()
-            self.current_view.display()
-            return
+    @property
+    def number_of_views(self):
+        return len(self.views) + len(self.view_to_load)
+
+    def switch_view(self, view_type=None):
+        if self.current_view:
+            if not self.parent and self.modified():
+                return
+            self.current_view.set_value()
+            if (self.current_record and
+                    self.current_record not in self.current_record.group):
+                self.current_record = None
+            fields = self.current_view.get_fields()
+            if (self.current_record and self.current_view.editable
+                    and not self.current_record.validate(fields)):
+                self.screen_container.set(self.current_view.widget)
+                self.set_cursor()
+                self.current_view.display()
+                return
         if not view_type or self.current_view.view_type != view_type:
-            for i in xrange(len(self.views) + len(self.view_to_load)):
+            for i in xrange(self.number_of_views):
                 if len(self.view_to_load):
                     self.load_view_to_load()
                     self.__current_view = len(self.views) - 1
@@ -314,9 +369,6 @@ class Screen(SignalEvent):
                 elif self.current_view.view_type == view_type:
                     break
         self.screen_container.set(self.current_view.widget)
-        if not self.current_record and self.current_view.view_type == 'form':
-            self.new(default=default, context=context)
-        self.current_view.cancel()
         self.display()
         self.set_cursor()
 
@@ -324,14 +376,15 @@ class Screen(SignalEvent):
         if len(self.view_to_load):
             if self.view_ids:
                 view_id = self.view_ids.pop(0)
-                view_type = self.view_to_load.pop(0)
             else:
-                view_id = False
-                view_type = self.view_to_load.pop(0)
+                view_id = None
+            view_type = self.view_to_load.pop(0)
             self.add_view_id(view_id, view_type)
 
-    def add_view_id(self, view_id, view_type, display=False, context=None):
-        if view_type in self.views_preload:
+    def add_view_id(self, view_id, view_type):
+        if view_id and str(view_id) in self.views_preload:
+            view = self.views_preload[str(view_id)]
+        elif not view_id and view_type in self.views_preload:
             view = self.views_preload[view_type]
         else:
             try:
@@ -339,11 +392,12 @@ class Screen(SignalEvent):
                     view_id, view_type, context=self.context)
             except RPCException:
                 return
-        return self.add_view(view, display, context=context)
+        return self.add_view(view)
 
-    def add_view(self, view, display=False, context=None):
+    def add_view(self, view):
         arch = view['arch']
         fields = view['fields']
+        view_id = view['view_id']
 
         xml_dom = xml.dom.minidom.parseString(arch)
         for node in xml_dom.childNodes:
@@ -351,12 +405,12 @@ class Screen(SignalEvent):
                 self.fields_view_tree = view
             break
 
-        # Ensure that loading is always eager for fields on tree view
-        # and always lazy for fields only on form view
-        if node.localName == 'tree':
-            loading = 'eager'
-        else:
+        # Ensure that loading is always lazy for fields on form view
+        # and always eager for fields on tree or graph view
+        if node.localName == 'form':
             loading = 'lazy'
+        else:
+            loading = 'eager'
         for field in fields:
             if field not in self.group.fields or loading == 'eager':
                 fields[field]['loading'] = loading
@@ -367,73 +421,42 @@ class Screen(SignalEvent):
         children_field = view.get('field_childs')
 
         from tryton.gui.window.view_form.view.widget_parse import WidgetParse
-        self.group.add_fields(fields, context=context)
+        self.group.add_fields(fields)
 
         parser = WidgetParse(parent=self.parent)
         view = parser.parse(self, xml_dom, self.group.fields,
                 children_field=children_field)
+        view.view_id = view_id
 
         self.views.append(view)
-
-        if display:
-            self.__current_view = len(self.views) - 1
-            self.screen_container.set(self.current_view.widget)
-            fields = self.current_view.get_fields()
-            if (not self.current_record
-                and self.current_view.view_type == 'form'):
-                self.new()
-            self.set_cursor()
-            self.current_view.cancel()
-            self.display()
         return view
 
-    def editable_get(self):
-        if hasattr(self.current_view, 'widget_tree'):
-            if hasattr(self.current_view.widget_tree, 'editable'):
-                return self.current_view.widget_tree.editable
-        return False
-
-    def new(self, default=True, context=None):
-        if self.group.readonly:
-            return
-        if context is None:
-            context = {}
-        if self.current_view and \
-                ((self.current_view.view_type == 'tree' \
-                and not (hasattr(self.current_view.widget_tree, 'editable') \
-                    and self.current_view.widget_tree.editable)) \
-                or self.current_view.view_type == 'graph'):
-            prev_current_record = self.current_record
-            for i in xrange(len(self.views)):
-                self.switch_view()
-                if self.current_view.view_type == 'form':
-                    break
+    def new(self, default=True):
+        previous_view = self.current_view
+        if self.current_view.view_type == 'calendar':
+            selected_date = self.current_view.get_selected_date()
+        if self.current_view and not self.current_view.editable:
+            self.switch_view('form')
             if self.current_view.view_type != 'form':
                 return None
-            if not prev_current_record and self.current_record:
-                # new already called in switch_view
-                return self.current_record
-        ctx = {}
-        ctx.update(rpc.CONTEXT)
-        ctx.update(self.context)
-        ctx.update(context)
         if self.current_record:
             group = self.current_record.group
         else:
             group = self.group
-        record = group.new(default, self.domain, ctx)
+        record = group.new(default)
         group.add(record, self.new_model_position())
+        if previous_view.view_type == 'calendar':
+            previous_view.set_default_date(record, selected_date)
         self.current_record = record
         self.display()
         self.set_cursor(new=True)
-        self.request_set()
         return self.current_record
 
     def new_model_position(self):
         position = -1
-        if self.current_view and self.current_view.view_type == 'tree' \
-                and hasattr(self.current_view.widget_tree, 'editable') \
-                    and self.current_view.widget_tree.editable == 'top':
+        if (self.current_view and self.current_view.view_type == 'tree'
+                and hasattr(self.current_view.widget_tree, 'editable')
+                and self.current_view.widget_tree.editable == 'top'):
             position = 0
         return position
 
@@ -446,8 +469,6 @@ class Screen(SignalEvent):
             self.current_record.cancel()
             if self.current_record.id < 0:
                 self.remove()
-        if self.current_view:
-            self.current_view.cancel()
 
     def save_current(self):
         if not self.current_record:
@@ -468,12 +489,11 @@ class Screen(SignalEvent):
             self.set_cursor()
             self.current_view.display()
             return False
-        self.signal('record-saved')
         if path and obj_id:
             path = path[:-1] + ((path[-1][0], obj_id),)
         self.current_record = self.group.get_by_path(path)
         self.display()
-        self.request_set()
+        self.signal('record-saved')
         return obj_id
 
     def __get_current_view(self):
@@ -490,20 +510,17 @@ class Screen(SignalEvent):
         elif current_view.view_type in ('tree', 'form'):
             current_view.set_cursor(new=new, reset_view=reset_view)
 
-    def get(self, get_readonly=True, includeid=False, check_load=True,
-            get_modifiedonly=False):
+    def get(self):
         if not self.current_record:
             return None
         self.current_view.set_value()
-        return self.current_record.get(get_readonly=get_readonly,
-                includeid=includeid, check_load=check_load,
-                get_modifiedonly=get_modifiedonly)
+        return self.current_record.get()
 
-    def get_on_change_value(self, check_load=True):
+    def get_on_change_value(self):
         if not self.current_record:
             return None
         self.current_view.set_value()
-        return self.current_record.get_on_change_value(check_load=check_load)
+        return self.current_record.get_on_change_value()
 
     def modified(self):
         if self.current_view.view_type != 'tree':
@@ -518,27 +535,21 @@ class Screen(SignalEvent):
             return True
         return False
 
-    def reload(self, written=False):
-        ids = self.sel_ids_get()
+    def reload(self, ids, written=False):
         self.group.reload(ids)
         if written:
             self.group.written(ids)
         if self.parent:
             self.parent.reload()
         self.display()
-        self.request_set()
 
     def unremove(self):
-        records = self.current_view.selected_records()
+        records = self.selected_records
         for record in records:
             self.group.unremove(record)
 
     def remove(self, delete=False, remove=False, force_remove=False):
-        records = None
-        if self.current_view.view_type == 'form' and self.current_record:
-            records = [self.current_record]
-        elif self.current_view.view_type == 'tree':
-            records = self.current_view.selected_records()
+        records = self.selected_records
         if not records:
             return
         if delete:
@@ -582,53 +593,77 @@ class Screen(SignalEvent):
             self.current_record = self.group[0]
         self.set_cursor()
         self.display()
-        self.request_set()
         return True
+
+    def copy(self):
+        res_ids = self.sel_ids_get()
+        try:
+            new_ids = RPCExecute('model', self.model_name, 'copy', res_ids, {},
+                context=self.context)
+        except RPCException:
+            return
+        self.load(new_ids)
 
     def set_tree_state(self):
         view = self.current_view
-        if (not CONFIG['client.save_tree_expanded_state']
-                or not self.current_view
-                or self.current_view.view_type != 'tree'
-                or not self.current_view.children_field
+        if (not CONFIG['client.save_tree_state']
+                or not view
+                or view.view_type != 'tree'
                 or not self.group):
             return
+        if id(view) in self.tree_states_done:
+            return
         parent = self.parent.id if self.parent else None
-        expanded_nodes = self.expanded_nodes[parent][view.children_field]
-        if expanded_nodes is None:
+        state = self.tree_states[parent][view.children_field]
+        if state is None:
             json_domain = self.get_tree_domain(parent)
             try:
-                expanded_nodes = RPCExecute('model',
-                    'ir.ui.view_tree_expanded_state', 'get_expanded',
+                expanded_nodes, selected_nodes = RPCExecute('model',
+                    'ir.ui.view_tree_state', 'get',
                     self.model_name, json_domain,
                     self.current_view.children_field)
                 expanded_nodes = json.loads(expanded_nodes)
+                selected_nodes = json.loads(selected_nodes)
             except RPCException:
+                logging.getLogger(__name__).warn(
+                    _('Unable to get view tree state'))
                 expanded_nodes = []
-            self.expanded_nodes[parent][view.children_field] = expanded_nodes
+                selected_nodes = []
+            self.tree_states[parent][view.children_field] = (
+                expanded_nodes, selected_nodes)
+        else:
+            expanded_nodes, selected_nodes = state
         view.expand_nodes(expanded_nodes)
+        view.select_nodes(selected_nodes)
+        self.tree_states_done.add(id(view))
 
-    def save_tree_state(self):
-        view = self.current_view
-        if (not CONFIG['client.save_tree_expanded_state']
-                or not view
-                or view.view_type != 'tree'
-                or not view.children_field
-                or not (self.parent is None
-                    or isinstance(self.parent, Record))):
+    def save_tree_state(self, store=True):
+        if not CONFIG['client.save_tree_state']:
             return
-        parent = self.parent.id if self.parent else None
-        paths = view.get_expanded_paths()
-        self.expanded_nodes[parent][view.children_field] = paths
-        json_domain = self.get_tree_domain(parent)
-        json_paths = json.dumps(paths)
-        try:
-            RPCExecute('model', 'ir.ui.view_tree_expanded_state',
-                'set_expanded', self.model_name, json_domain,
-                self.current_view.children_field, json_paths,
-                process_exception=False)
-        except (TrytonServerError, TrytonServerUnavailable):
-            pass
+        for view in self.views:
+            if view.view_type == 'form':
+                for widgets in view.widgets.itervalues():
+                    for widget in widgets:
+                        if hasattr(widget, 'screen'):
+                            widget.screen.save_tree_state(store)
+            elif (view.view_type == 'tree' and view.children_field):
+                parent = self.parent.id if self.parent else None
+                paths = view.get_expanded_paths()
+                selected_paths = view.get_selected_paths()
+                self.tree_states[parent][view.children_field] = (
+                    paths, selected_paths)
+                if store:
+                    json_domain = self.get_tree_domain(parent)
+                    json_paths = json.dumps(paths)
+                    json_selected_path = json.dumps(selected_paths)
+                    try:
+                        RPCExecute('model', 'ir.ui.view_tree_state', 'set',
+                            self.model_name, json_domain, view.children_field,
+                            json_paths, json_selected_path,
+                            process_exception=False)
+                    except (TrytonServerError, TrytonServerUnavailable):
+                        logging.getLogger(__name__).warn(
+                            _('Unable to set view tree state'))
 
     def get_tree_domain(self, parent):
         if parent:
@@ -639,8 +674,9 @@ class Screen(SignalEvent):
         return json_domain
 
     def load(self, ids, set_cursor=True, modified=False):
-        self.expanded_nodes.clear()
-        self.group.load(ids, display=False, modified=modified)
+        self.tree_states.clear()
+        self.tree_states_done.clear()
+        self.group.load(ids, modified=modified)
         self.current_view.reset()
         if ids:
             self.display(ids[0])
@@ -649,27 +685,32 @@ class Screen(SignalEvent):
             self.display()
         if set_cursor:
             self.set_cursor()
-        self.request_set()
 
     def display(self, res_id=None, set_cursor=False):
         if res_id:
             self.current_record = self.group.get(res_id)
+        else:
+            if (self.current_record
+                    and self.current_record in self.current_record.group):
+                pass
+            elif self.group:
+                self.current_record = self.group[0]
+            else:
+                self.current_record = None
         if self.views:
-            #XXX To remove when calendar will be implemented
-            if self.current_view.view_type == 'calendar' and \
-                    len(self.views) > 1:
-                self.switch_view()
-            self.search_active(self.current_view.view_type \
-                    in ('tree', 'graph', 'calendar'))
+            self.search_active(self.current_view.view_type
+                in ('tree', 'graph', 'calendar'))
             for view in self.views:
                 view.display()
             self.current_view.widget.set_sensitive(
-                    bool(self.group \
-                            or (self.current_view.view_type != 'form') \
-                            or self.current_record))
+                bool(self.group
+                    or (self.current_view.view_type != 'form')
+                    or self.current_record))
             if set_cursor:
                 self.set_cursor(reset_view=False)
         self.set_tree_state()
+        # Force record-message signal
+        self.current_record = self.current_record
 
     def display_next(self):
         view = self.current_view
@@ -697,7 +738,7 @@ class Screen(SignalEvent):
                     record = group[idx]
                     break
                 parent = record.parent
-                if not parent:
+                if not parent or record.model_name != parent.model_name:
                     break
                 next = parent.next.get(id(parent.group))
                 while not next:
@@ -710,6 +751,27 @@ class Screen(SignalEvent):
                 record = next
                 break
             self.current_record = record
+        elif view.view_type == 'calendar':
+            record = self.current_record
+            goocalendar = view.children['goocalendar']
+            date = goocalendar.selected_date
+            year = date.year
+            month = date.month
+            start = datetime.datetime(year, month, 1)
+            nb_days = calendar.monthrange(year, month)[1]
+            delta = datetime.timedelta(days=nb_days)
+            end = start + delta
+            events = goocalendar.event_store.get_events(start, end)
+            events.sort()
+            if not record:
+                self.current_record = len(events) and events[0].record
+            else:
+                for idx, event in enumerate(events):
+                    if event.record == record:
+                        next_id = idx + 1
+                        if next_id < len(events):
+                            self.current_record = events[next_id].record
+                        break
         else:
             self.current_record = self.group[0] if len(self.group) else None
         self.set_cursor(reset_view=False)
@@ -741,16 +803,38 @@ class Screen(SignalEvent):
                         record = children[-1]
             else:
                 parent = record.parent
-                if parent:
+                if parent and record.model_name == parent.model_name:
                     record = parent
             self.current_record = record
+        elif view.view_type == 'calendar':
+            record = self.current_record
+            goocalendar = view.children['goocalendar']
+            date = goocalendar.selected_date
+            year = date.year
+            month = date.month
+            start = datetime.datetime(year, month, 1)
+            nb_days = calendar.monthrange(year, month)[1]
+            delta = datetime.timedelta(days=nb_days)
+            end = start + delta
+            events = goocalendar.event_store.get_events(start, end)
+            events.sort()
+            if not record:
+                self.current_record = len(events) and events[0].record
+            else:
+                for idx, event in enumerate(events):
+                    if event.record == record:
+                        prev_id = idx - 1
+                        if prev_id >= 0:
+                            self.current_record = events[prev_id].record
+                        break
         else:
             self.current_record = self.group[-1] if len(self.group) else None
         self.set_cursor(reset_view=False)
         view.display()
 
-    def sel_ids_get(self):
-        return self.current_view.sel_ids_get()
+    @property
+    def selected_records(self):
+        return self.current_view.selected_records
 
     def id_get(self):
         if not self.current_record:
@@ -768,7 +852,95 @@ class Screen(SignalEvent):
         self.current_record.on_change(fieldname, attr)
         self.display()
 
-    def request_set(self):
-        if self.model_name == 'res.request':
-            from tryton.gui.main import Main
-            Main.get_main().request_set()
+    def get_buttons(self):
+        'Return active buttons for the current view'
+        def is_active(record, button):
+            states = record.expr_eval(button.attrs.get('states', {}))
+            return not (states.get('invisible') or states.get('readonly'))
+
+        if not self.selected_records:
+            return []
+
+        buttons = self.current_view.get_buttons()
+
+        for record in self.selected_records:
+            buttons = [b for b in buttons if is_active(record, b)]
+            if not buttons:
+                break
+        return buttons
+
+    def button(self, button):
+        'Execute button on the current record'
+        if button.get('confirm', False) and not sur(button['confirm']):
+            return
+        record = self.current_record
+        if not record.save(force_reload=False):
+            return
+        ids = [r.id for r in self.selected_records]
+        try:
+            action = RPCExecute('model', self.model_name, button['name'],
+                ids, context=self.context)
+        except RPCException:
+            action = None
+        self.reload(ids, written=True)
+        if isinstance(action, basestring):
+            self.client_action(action)
+        elif action:
+            Action.execute(action, {
+                    'model': self.model_name,
+                    'id': record.id,
+                    'ids': ids,
+                    }, context=self.context)
+
+    def client_action(self, action):
+        access = MODELACCESS[self.model_name]
+        if action == 'new':
+            if access['create']:
+                self.new()
+        elif action == 'delete':
+            if access['delete']:
+                self.remove(delete=not self.parent,
+                    force_remove=not self.parent)
+        elif action == 'remove':
+            if access['write'] and access['read'] and self.parent:
+                self.remove(remove=True)
+        elif action == 'copy':
+            if access['create']:
+                self.copy()
+        elif action == 'next':
+            self.display_next()
+        elif action == 'previous':
+            self.display_prev()
+        elif action == 'close':
+            from tryton.gui import Main
+            Main.get_main().sig_win_close()
+        elif action.startswith('switch'):
+            _, view_type = action.split(None, 1)
+            self.switch_view(view_type=view_type)
+
+    def get_url(self):
+        query_string = []
+        if self.domain:
+            query_string.append(('domain', json.dumps(self.domain,
+                        cls=JSONEncoder)))
+        if self.context:
+            query_string.append(('context', json.dumps(self.context,
+                        cls=JSONEncoder)))
+        path = [rpc._DATABASE, 'model', self.model_name]
+        view_ids = [v.view_id for v in self.views] + self.view_ids
+        if self.current_view.view_type != 'form':
+            search_string = self.screen_container.get_text()
+            search_value = self.domain_parser.parse(search_string)
+            if search_value:
+                query_string.append(('search_value', json.dumps(search_value,
+                            cls=JSONEncoder)))
+        elif self.current_record and self.current_record.id > -1:
+            path.append(str(self.current_record.id))
+            i = view_ids.index(self.current_view.view_id)
+            view_ids = view_ids[i:] + view_ids[:i]
+        if view_ids:
+            query_string.append(('views', json.dumps(view_ids)))
+        query_string = urllib.urlencode(query_string)
+        return urlparse.urlunparse(('tryton',
+                '%s:%s' % (rpc._HOST, rpc._PORT),
+                '/'.join(path), query_string, '', ''))

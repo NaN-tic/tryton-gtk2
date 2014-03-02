@@ -10,6 +10,7 @@ import os
 import subprocess
 import re
 import logging
+import unicodedata
 from functools import partial
 from tryton.config import CONFIG
 from tryton.config import TRYTON_ICON, PIXMAPS_DIR
@@ -37,15 +38,12 @@ try:
     import ssl
 except ImportError:
     ssl = None
-import dis
 from threading import Lock
-try:
-    import pytz
-except ImportError:
-    pytz = None
+import dateutil.tz
 
 from tryton.exceptions import (TrytonServerError, TrytonError,
     TrytonServerUnavailable)
+from tryton.pyson import PYSONEncoder
 
 _ = gettext.gettext
 
@@ -135,6 +133,80 @@ ICONFACTORY = TrytonIconFactory()
 ICONFACTORY.add_default()
 
 
+class ModelAccess(object):
+
+    batchnum = 100
+    _access = {}
+    _models = []
+
+    def load_models(self, refresh=False):
+        if not refresh:
+            self._access.clear()
+        del self._models[:]
+
+        try:
+            self._models = rpc.execute('model', 'ir.model', 'list_models',
+                rpc.CONTEXT)
+        except TrytonServerError:
+            pass
+
+    def __getitem__(self, model):
+        if model in self._access:
+            return self._access[model]
+        if model not in self._models:
+            self.load_models(refresh=True)
+        idx = self._models.index(model)
+        to_load = slice(max(0, idx - self.batchnum // 2),
+            idx + self.batchnum // 2)
+        try:
+            access = rpc.execute('model', 'ir.model.access', 'get_access',
+                self._models[to_load], rpc.CONTEXT)
+        except TrytonServerError:
+            access = {}
+        self._access.update(access)
+        return self._access[model]
+
+MODELACCESS = ModelAccess()
+
+
+class ViewSearch(object):
+    searches = None
+
+    def load_searches(self):
+        try:
+            self.searches = rpc.execute('model', 'ir.ui.view_search',
+                'get_search', rpc.CONTEXT)
+        except TrytonServerError:
+            self.searches = {}
+
+    def __getitem__(self, model):
+        return self.searches.get(model, [])
+
+    def add(self, model, name, domain):
+        try:
+            id_, = RPCExecute('model', 'ir.ui.view_search',
+                'create', [{
+                        'model': model,
+                        'name': name,
+                        'domain': PYSONEncoder().encode(domain),
+                        }])
+        except RPCException:
+            return
+        self.searches.setdefault(model, []).append((id_, name, domain))
+
+    def remove(self, model, id_):
+        try:
+            RPCExecute('model', 'ir.ui.view_search', 'delete', [id_])
+        except RPCException:
+            return
+        for i, domain in enumerate(self.searches[model]):
+            if domain[0] == id_:
+                del self.searches[model][i]
+                break
+
+VIEW_SEARCH = ViewSearch()
+
+
 def find_in_path(name):
     if os.name == "nt":
         sep = ';'
@@ -175,8 +247,6 @@ def refresh_langlist(lang_widget, host, port):
         lang_list = rpc.db_exec(host, port, 'list_lang')
     except socket.error:
         return []
-    from tryton.gui.main import Main
-    Main.get_main().refresh_ssl()
     index = -1
     i = 0
     lang = locale.getdefaultlocale()[0]
@@ -363,7 +433,11 @@ def file_selection(title, filename='',
     win.set_icon(TRYTON_ICON)
     win.set_current_folder(CONFIG['client.default_path'])
     if filename:
-        win.set_current_name(filename)
+        if action in (gtk.FILE_CHOOSER_ACTION_SAVE,
+                gtk.FILE_CHOOSER_ACTION_CREATE_FOLDER):
+            win.set_current_name(filename)
+        else:
+            win.set_filename(filename)
     win.set_select_multiple(multi)
     win.set_default_response(gtk.RESPONSE_OK)
     if filters is not None:
@@ -400,7 +474,7 @@ def file_selection(title, filename='',
             filepath = filepath.decode('utf-8')
             try:
                 CONFIG['client.default_path'] = \
-                        os.path.dirname(filepath)
+                    os.path.dirname(filepath)
                 CONFIG.save()
             except IOError:
                 pass
@@ -413,12 +487,24 @@ def file_selection(title, filename='',
             filenames = [x.decode('utf-8') for x in filenames]
             try:
                 CONFIG['client.default_path'] = \
-                        os.path.dirname(filenames[0])
+                    os.path.dirname(filenames[0])
             except IOError:
                 pass
         parent.present()
         win.destroy()
         return filenames
+
+
+_slugify_strip_re = re.compile(r'[^\w\s-]')
+_slugify_hyphenate_re = re.compile(r'[-\s]+')
+
+
+def slugify(value):
+    if not isinstance(value, unicode):
+        value = unicode(value)
+    value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore')
+    value = unicode(_slugify_strip_re.sub('', value).strip().lower())
+    return _slugify_hyphenate_re.sub('-', value)
 
 
 def file_open(filename, type, print_p=False):
@@ -551,12 +637,8 @@ class WarningDialog(UniqueDialog):
     def build_dialog(self, parent, message, title, buttons=gtk.BUTTONS_OK):
         dialog = gtk.MessageDialog(parent, gtk.DIALOG_DESTROY_WITH_PARENT,
             gtk.MESSAGE_WARNING, buttons)
-        if hasattr(dialog, 'format_secondary_markup'):
-            dialog.set_markup('<b>%s</b>' % (to_xml(title)))
-            dialog.format_secondary_markup(to_xml(message))
-        else:
-            dialog.set_markup(
-                '<b>%s</b>\n%s' % (to_xml(title), to_xml(message)))
+        dialog.set_markup('<b>%s</b>' % (to_xml(title)))
+        dialog.format_secondary_markup(to_xml(message))
         return dialog
 
 warning = WarningDialog()
@@ -829,7 +911,7 @@ class ErrorDialog(UniqueDialog):
     def __call__(self, title, details):
         if title == details:
             title = ''
-        log = logging.getLogger('common.message')
+        log = logging.getLogger(__name__)
         log.error(details + '\n' + title)
 
         response = super(ErrorDialog, self).__call__(title, details)
@@ -910,10 +992,15 @@ def send_bugtracker(title, msg):
                 title = '[no title]'
             issue_id = None
             msg_ids = server.filter('msg', None, {'summary': str(msg_md5)})
-            if msg_ids:
-                issue_ids = server.filter('issue', None, {'messages': msg_ids})
-                if issue_ids:
-                    issue_id = issue_ids[0]
+            for msg_id in msg_ids:
+                summary = server.display(
+                    'msg%s' % msg_id, 'summary')['summary']
+                if summary == msg_md5:
+                    issue_ids = server.filter(
+                        'issue', None, {'messages': msg_id})
+                    if issue_ids:
+                        issue_id = issue_ids[0]
+                        break
             if issue_id:
                 # issue to same message already exists, add user to nosy-list
                 server.set('issue' + str(issue_id), *['nosy=+' + user])
@@ -929,8 +1016,8 @@ def send_bugtracker(title, msg):
                 # second create issue with this message
                 issue_id = server.create('issue', *['messages=' + str(msg_id),
                     'nosy=' + user, 'title=' + title, 'priority=bug'])
-                message(_('Created new bug with ID ') + \
-                        'issue%s' % issue_id)
+                message(_('Created new bug with ID ')
+                    + 'issue%s' % issue_id)
             webbrowser.open(CONFIG['roundup.url'] + 'issue%s' % issue_id,
                 new=2)
         except (socket.error, xmlrpclib.Fault), exception:
@@ -967,7 +1054,7 @@ def process_exception(exception, *args, **kwargs):
             sys.exit()
         elif exception.faultCode == 'NotLogged':
             if rpc.CONNECTION is None:
-                message(_('Connection error!\n' \
+                message(_('Connection error!\n'
                         'Unable to connect to the server!'))
                 return False
     elif isinstance(exception, TrytonServerError):
@@ -975,11 +1062,11 @@ def process_exception(exception, *args, **kwargs):
             name, msg, description = exception.args
             res = userwarning(description, msg)
             if res in ('always', 'ok'):
-                args2 = ('model', 'res.user.warning', 'create', {
-                        'user': rpc._USER,
-                        'name': name,
-                        'always': (res == 'always'),
-                        }, rpc.CONTEXT)
+                args2 = ('model', 'res.user.warning', 'create', [{
+                            'user': rpc._USER,
+                            'name': name,
+                            'always': (res == 'always'),
+                            }], rpc.CONTEXT)
                 try:
                     rpc_execute(*args2)
                 except TrytonServerError, exception:
@@ -1012,6 +1099,14 @@ def process_exception(exception, *args, **kwargs):
                 return False
         elif exception.faultCode == 'NotLogged':
             from tryton.gui.main import Main
+            if kwargs.get('session', rpc._SESSION) != rpc._SESSION:
+                if args:
+                    try:
+                        return rpc_execute(*args)
+                    except TrytonServerError, exception:
+                        return process_exception(exception, *args,
+                            rpc_execute=rpc_execute)
+                return
             if not PLOCK.acquire(False):
                 return False
             hostname = rpc._HOST
@@ -1024,9 +1119,8 @@ def process_exception(exception, *args, **kwargs):
                         return False
                     res = rpc.login(rpc._USERNAME, password, hostname, port,
                             rpc._DATABASE)
-                    Main.get_main().refresh_ssl()
                     if res == -1:
-                        message(_('Connection error!\n' \
+                        message(_('Connection error!\n'
                                 'Unable to connect to the server!'))
                         return False
                     if res < 0:
@@ -1114,20 +1208,18 @@ def generateColorscheme(masterColor, keys, light=0.06):
 class DBProgress(object):
 
     def __init__(self, host, port):
-        self.dbs, self.createdb = None, None
+        self.dbs = None, None
         self.host, self.port = host, port
         self.updated = threading.Event()
-        self.db_info = None
 
     def start(self):
-        dbs, createdb = None, False
+        dbs = None
         try:
             dbs = refresh_dblist(self.host, self.port)
-            createdb = True
         except Exception:
             pass
         finally:
-            self.db_info = (dbs, createdb)
+            self.dbs = dbs
             self.updated.set()
 
     def update(self, combo, progressbar, callback, dbname=''):
@@ -1142,15 +1234,9 @@ class DBProgress(object):
             progressbar.pulse()
             return True
         progressbar.hide()
-        dbs, createdb = self.db_info
+        dbs = self.dbs
 
-        if dbs is None:
-            dbs, createdb = None, False
-        elif dbs == -1:
-            dbs, createdb = -1, False
-        else:
-            from tryton.gui.main import Main
-            Main.get_main().refresh_ssl()
+        if dbs is not None and dbs not in (-1, -2):
             liststore = combo.get_model()
             liststore.clear()
             index = -1
@@ -1163,7 +1249,7 @@ class DBProgress(object):
             combo.set_active(index)
             dbs = len(dbs)
 
-        callback(dbs, createdb)
+        callback(dbs)
         return False
 
 
@@ -1196,13 +1282,11 @@ class RPCProgress(object):
         return True
 
     def run(self, process_exception_p=True, main_iteration_p=True):
+        session = rpc._SESSION
         thread.start_new_thread(self.start, ())
 
         watch = None
-        parent_sensitive = self.parent.props.sensitive
         i = 0
-        win = None
-        progressbar = None
         while (not self.res) and (not self.error):
             i += 1
             if i > 1:
@@ -1212,62 +1296,16 @@ class RPCProgress(object):
                     with gtk.gdk.lock:
                         while gtk.events_pending():
                             gtk.main_iteration()
-            if i > 10 and main_iteration_p:
-                if not win or not progressbar:
-                    win = gtk.Window(type=gtk.WINDOW_TOPLEVEL)
-                    win.set_position(gtk.WIN_POS_CENTER_ON_PARENT)
-                    if hasattr(win, 'set_deletable'):
-                        win.set_deletable(False)
-                    win.set_decorated(False)
-                    vbox = gtk.VBox(False, 0)
-                    hbox = gtk.HBox(False, 13)
-                    hbox.set_border_width(10)
-                    img = gtk.Image()
-                    img.set_from_stock('tryton-dialog-information',
-                            gtk.ICON_SIZE_DIALOG)
-                    hbox.pack_start(img, expand=True, fill=False)
-                    vbox2 = gtk.VBox(False, 0)
-                    label = gtk.Label()
-                    label.set_markup(
-                        '<b>' + _('Operation in progress') + '</b>')
-                    label.set_alignment(0.0, 0.5)
-                    vbox2.pack_start(label, expand=True, fill=False)
-                    vbox2.pack_start(gtk.HSeparator(), expand=True, fill=True)
-                    vbox2.pack_start(gtk.Label(_("Please wait,\n" \
-                            "this operation may take a while...")),
-                            expand=True, fill=False)
-                    hbox.pack_start(vbox2, expand=True, fill=True)
-                    vbox.pack_start(hbox)
-                    progressbar = gtk.ProgressBar()
-                    progressbar.set_orientation(gtk.PROGRESS_LEFT_TO_RIGHT)
-                    vbox.pack_start(progressbar, expand=True, fill=False)
-                    viewport = gtk.Viewport()
-                    viewport.set_shadow_type(gtk.SHADOW_ETCHED_IN)
-                    viewport.add(vbox)
-                    win.add(viewport)
-                    win.set_transient_for(self.parent)
-                    win.set_modal(True)
-                    win.show_all()
-                    win.window.set_cursor(watch)
-                    self.parent.props.sensitive = False
-                with gtk.gdk.lock:
-                    progressbar.pulse()
             time.sleep(0.1)
-        self.parent.props.sensitive = parent_sensitive
         if self.parent.window:
             self.parent.window.set_cursor(None)
-        if win:
-            win.destroy()
-            with gtk.gdk.lock:
-                while gtk.events_pending():
-                    gtk.main_iteration()
         if self.exception:
             if process_exception_p:
                 def rpc_execute(*args):
                     return RPCProgress('execute',
                         args).run(process_exception_p, main_iteration_p)
                 result = process_exception(self.exception, *self.args,
-                    rpc_execute=rpc_execute)
+                    rpc_execute=rpc_execute, session=session)
                 if result is False:
                     raise RPCException(self.exception)
                 return result
@@ -1317,8 +1355,6 @@ COLORS = {
     'invalid': '#ff6969',
     'required': '#d2d2ff',
 }
-
-HM_FORMAT = '%H:%M:%S'
 
 FLOAT_TIME_CONV = {
     'Y': 8760,
@@ -1440,71 +1476,13 @@ def filter_domain(domain):
             res.extend(filter_domain(arg))
     return res
 
-_ALLOWED_CODES = set(dis.opmap[x] for x in [
-        'POP_TOP', 'ROT_TWO', 'ROT_THREE', 'ROT_FOUR', 'DUP_TOP', 'BUILD_LIST',
-        'BUILD_MAP', 'BUILD_TUPLE', 'LOAD_CONST', 'RETURN_VALUE',
-        'STORE_SUBSCR', 'UNARY_POSITIVE', 'UNARY_NEGATIVE', 'UNARY_NOT',
-        'UNARY_INVERT', 'BINARY_POWER', 'BINARY_MULTIPLY', 'BINARY_DIVIDE',
-        'BINARY_FLOOR_DIVIDE', 'BINARY_TRUE_DIVIDE', 'BINARY_MODULO',
-        'BINARY_ADD', 'BINARY_SUBTRACT', 'BINARY_LSHIFT', 'BINARY_RSHIFT',
-        'BINARY_AND', 'BINARY_XOR', 'BINARY_OR', 'STORE_MAP', 'LOAD_NAME',
-        'CALL_FUNCTION', 'COMPARE_OP', 'LOAD_ATTR', 'STORE_NAME', 'GET_ITER',
-        'FOR_ITER', 'LIST_APPEND', 'JUMP_ABSOLUTE', 'DELETE_NAME',
-        'JUMP_IF_TRUE', 'JUMP_IF_FALSE', 'JUMP_IF_FALSE_OR_POP',
-        'JUMP_IF_TRUE_OR_POP', 'POP_JUMP_IF_FALSE', 'POP_JUMP_IF_TRUE',
-        'BINARY_SUBSCR',
-        ] if x in dis.opmap)
-
-_SAFE_EVAL_CACHE = {}
-
-
-def safe_eval(source, data=None):
-    if '__subclasses__' in source:
-        raise ValueError('__subclasses__ not allowed')
-    if hashlib:
-        key = hashlib.md5(source).digest()
-    else:
-        key = md5.new(source).digest()
-    c = _SAFE_EVAL_CACHE.get(key)
-    if not c:
-        c = compile(source, '', 'eval')
-        codes = []
-        s = c.co_code
-        i = 0
-        while i < len(s):
-            code = ord(s[i])
-            codes.append(code)
-            if code >= dis.HAVE_ARGUMENT:
-                i += 3
-            else:
-                i += 1
-        for code in codes:
-            if code not in _ALLOWED_CODES:
-                raise ValueError('opcode %s not allowed' % dis.opname[code])
-        if len(_SAFE_EVAL_CACHE) > 1024:
-            _SAFE_EVAL_CACHE.clear()
-        _SAFE_EVAL_CACHE[key] = c
-    return eval(c, {'__builtins__': {
-        'True': True,
-        'False': False,
-        'str': str,
-        'globals': locals,
-        'locals': locals,
-        'bool': bool,
-        'dict': dict,
-        }}, data)
-
 
 def timezoned_date(date, reverse=False):
-    if pytz and rpc.CONTEXT.get('timezone') and rpc.TIMEZONE:
-        lzone = pytz.timezone(rpc.CONTEXT['timezone'])
-        szone = pytz.timezone(rpc.TIMEZONE)
-        if reverse:
-            lzone, szone = szone, lzone
-        sdt = szone.localize(date, is_dst=True)
-        ldt = sdt.astimezone(lzone)
-        date = ldt
-    return date
+    lzone = dateutil.tz.tzlocal()
+    szone = dateutil.tz.tzutc()
+    if reverse:
+        lzone, szone = szone, lzone
+    return date.replace(tzinfo=szone).astimezone(lzone)
 
 
 def untimezoned_date(date):

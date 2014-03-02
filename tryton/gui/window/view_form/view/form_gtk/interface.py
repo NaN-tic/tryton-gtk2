@@ -16,6 +16,7 @@ _ = gettext.gettext
 class WidgetInterface(object):
 
     def __init__(self, field_name, model_name, attrs=None):
+        super(WidgetInterface, self).__init__()
         self.field_name = field_name
         self.model_name = model_name
         self.view = None  # Filled by ViewForm
@@ -65,10 +66,14 @@ class WidgetInterface(object):
         return False
 
     def send_modified(self, *args):
-        def send():
-            if self.record:
+        def send(value):
+            if self.record and self.get_value() == value:
                 self.record.signal('record-modified')
-        gobject.idle_add(send)
+
+        def get_value():
+            gobject.timeout_add(300, send, self.get_value())
+        # Wait the current event is finished to retreive the value
+        gobject.idle_add(get_value)
         return False
 
     def color_set(self, name):
@@ -129,9 +134,6 @@ class WidgetInterface(object):
             self.visible = True
             widget.show()
 
-    def _focus_in(self):
-        pass
-
     def _focus_out(self):
         if not self.field:
             return False
@@ -159,9 +161,6 @@ class WidgetInterface(object):
             field.get_state_attrs(record).get('invisible', False)))
 
     def set_value(self, record, field):
-        pass
-
-    def cancel(self):
         pass
 
 
@@ -207,17 +206,17 @@ class TranslateDialog(NoModal):
                 )
             try:
                 value = RPCExecute('model', self.widget.record.model_name,
-                    'read', self.widget.record.id, [self.widget.field_name],
+                    'read', [self.widget.record.id], [self.widget.field_name],
                     context={'language': language['code']}
-                    )[self.widget.field_name]
+                    )[0][self.widget.field_name]
             except RPCException:
                 return
             context['fuzzy_translation'] = True
             try:
                 fuzzy_value = RPCExecute('model',
                     self.widget.record.model_name, 'read',
-                    self.widget.record.id, [self.widget.field_name],
-                    context=context)[self.widget.field_name]
+                    [self.widget.record.id], [self.widget.field_name],
+                    context=context)[0][self.widget.field_name]
             except RPCException:
                 return
             widget = self.widget.translate_widget()
@@ -272,7 +271,7 @@ class TranslateDialog(NoModal):
                     )
                 try:
                     RPCExecute('model', self.widget.record.model_name, 'write',
-                        self.widget.record.id, {
+                        [self.widget.record.id], {
                             self.widget.field_name: value,
                             }, context=context)
                 except RPCException:

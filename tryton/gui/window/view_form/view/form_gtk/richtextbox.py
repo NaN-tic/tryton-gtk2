@@ -5,7 +5,6 @@ import gtk
 import pango
 import re
 from gettext import gettext as _
-from functools import wraps
 from textbox import TextBox
 from tryton.common import get_toplevel_window
 
@@ -60,21 +59,6 @@ def formalize_text_markup(text):
         if not re.search('^$', lines[i]):
             lines[i] = actual_align + lines[i] + "</p>"
     return '\n'.join(lines)
-
-
-def active_markup(func):
-    "Decorator to activate markup"
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        active = self.tools['markup'].get_active()
-        if not active:
-            self.tools['markup'].set_active(True)
-        try:
-            return func(self, *args, **kwargs)
-        finally:
-            if not active:
-                self.tools['markup'].set_active(False)
-    return wrapper
 
 
 class RichTextBox(TextBox):
@@ -167,7 +151,8 @@ class RichTextBox(TextBox):
                 self.action_prop_font, tag)
         self.tool_ids['markup'] = self.tools['markup'].connect('toggled',
             self.edit_text_markup)
-        self.text_buffer.connect_after('insert-text', self.persist_style)
+        self.insert_text_id = self.text_buffer.connect_after('insert-text',
+            self.persist_style)
         # Tooltip text
         self.tools['bold'].set_tooltip_text(_('Change text to bold'))
         self.tools['italic'].set_tooltip_text(_('Change text to italic'))
@@ -186,28 +171,52 @@ class RichTextBox(TextBox):
             _('Change the background text'))
         self.tools['markup'].set_tooltip_text(_('Change the markup text view'))
         # Packing widgets
-        tool_bar = gtk.Toolbar()
+        self.tool_bar = gtk.Toolbar()
 
-        tool_bar.set_style(gtk.TOOLBAR_ICONS)
+        self.tool_bar.set_style(gtk.TOOLBAR_ICONS)
         for tag in tags:
-            tool_bar.insert(self.tools[tag], -1)
+            self.tool_bar.insert(self.tools[tag], -1)
         separator = gtk.SeparatorToolItem
         for local in (3, 6, 11, 14):
-            tool_bar.insert(separator(), local)
-        self.widget.pack_start(tool_bar, False)
+            self.tool_bar.insert(separator(), local)
+        self.widget.pack_start(self.tool_bar, False)
+
+    def get_value_markup(self):
+        if self.tools['markup'].get_active():
+            return self.get_value()
+        else:
+            return self.parser_to_text_markup(self.text_buffer)
 
     @property
-    @active_markup
     def modified(self):
-        return super(RichTextBox, self).modified
+        if self.record and self.field:
+            return (formalize_text_markup(self.field.get_client(self.record) or
+                    '') != self.get_value_markup())
+        return False
 
-    @active_markup
     def set_value(self, record, field):
-        super(RichTextBox, self).set_value(record, field)
+        # Popup for font_family and size should not trigger set_value from
+        # Form.leave otherwise the selection is lost
+        for tag in ('font_family', 'size'):
+            tool = self.tools[tag]
+            if (hasattr(tool.child.props, 'popup_shown')
+                    and tool.child.props.popup_shown):
+                return
+        if self.modified:
+            field.set_client(record, self.get_value_markup())
 
-    @active_markup
-    def display(self, record, field):
-        super(RichTextBox, self).display(record, field)
+    def set_buffer(self, value):
+        self.text_buffer.handler_block(self.insert_text_id)
+        if self.tools['markup'].get_active():
+            super(RichTextBox, self).set_buffer(value)
+        else:
+            text_buffer, deserial = self.parser_from_text_markup(value)
+            self.text_buffer.deserialize(self.text_buffer, deserial,
+                self.text_buffer.get_start_iter(),
+                text_buffer.serialize(text_buffer,
+                    "application/x-gtk-text-buffer-rich-text",
+                    text_buffer.get_start_iter(), text_buffer.get_end_iter()))
+        self.text_buffer.handler_unblock(self.insert_text_id)
 
     def _focus_out(self):
         if not self.focus_out:
@@ -221,27 +230,36 @@ class RichTextBox(TextBox):
                 return
         super(RichTextBox, self)._focus_out()
 
+    def _readonly_set(self, value):
+        super(RichTextBox, self)._readonly_set(value)
+        self.tool_bar.set_sensitive(not value)
+        if value and self.tools['markup'].get_active():
+            self.tools['markup'].set_active(False)
+
     def edit_text_markup(self, widget):
         '''on/off all buttons and call the appropriate parser'''
         tags = [tag for tag in self.tools if tag != 'markup']
         if widget.get_active():
             for tag in tags:
                 self.tools[tag].set_sensitive(False)
-            self.parser_to_text_markup()
+            text = self.parser_to_text_markup(self.text_buffer)
+            self.start_tags.clear()
+            self.end_tags.clear()
         else:
             for tag in tags:
                 self.tools[tag].set_sensitive(True)
-            self.parser_from_text_markup()
+            text = self.text_buffer.get_text(self.text_buffer.get_start_iter(),
+                self.text_buffer.get_end_iter()).decode('utf-8')
+        self.set_buffer(text)
 
-    def parser_to_text_markup(self):
+    def parser_to_text_markup(self, buffer_):
         '''Parser from rich text view to text markup'''
         text_buffer = gtk.TextBuffer(self.table_tag)
         deserial = text_buffer.register_deserialize_tagset()
         text_buffer.deserialize(text_buffer, deserial,
-            text_buffer.get_start_iter(), self.text_buffer.serialize(
-            self.text_buffer, "application/x-gtk-text-buffer-rich-text",
-            self.text_buffer.get_start_iter(),
-                self.text_buffer.get_end_iter()))
+            text_buffer.get_start_iter(), buffer_.serialize(
+                buffer_, "application/x-gtk-text-buffer-rich-text",
+                buffer_.get_start_iter(), buffer_.get_end_iter()))
         locks = {'bold': False, 'italic': False, 'underline': False,
             'left': False, 'right': False, 'center': False, 'fill': False}
         for prop in self.font_props:
@@ -285,16 +303,12 @@ class RichTextBox(TextBox):
             if not imark.forward_to_tag_toggle(None):
                 break
         text = text_buffer.get_text(text_buffer.get_start_iter(),
-            text_buffer.get_end_iter())
-        self.start_tags.clear()
-        self.end_tags.clear()
-        self.text_buffer.set_text(formalize_text_markup(text))
+            text_buffer.get_end_iter()).decode('utf-8')
+        return formalize_text_markup(text)
 
-    def parser_from_text_markup(self):
+    def parser_from_text_markup(self, text):
         '''Parser from text markup to rich text view'''
         text_buffer = gtk.TextBuffer(self.table_tag)
-        text = self.text_buffer.get_text(self.text_buffer.get_start_iter(),
-            self.text_buffer.get_end_iter())
         text_buffer.set_text(text)
         tags = []
         open_re = '<(?P<tag>\w{1,4})(?P<attrs> .+?)?>'
@@ -310,14 +324,14 @@ class RichTextBox(TextBox):
             text = re.sub(open_re, '', text, 1)
             text_buffer.delete(text_buffer.get_iter_at_offset(
                 data_open.start()), text_buffer.get_iter_at_offset(
-                data_open.end()))
+                    data_open.end()))
             close_re = '</%s>' % tag
             data_close = re.search(close_re, text)
             if data_close:
                 text = re.sub(close_re, '', text, 1)
                 text_buffer.delete(text_buffer.get_iter_at_offset(
                     data_close.start()), text_buffer.get_iter_at_offset(
-                    data_close.end()))
+                        data_close.end()))
                 start = create_mark(data_open.start())
                 end = create_mark(data_close.start())
                 if tag in ('b', 'i', 'u'):
@@ -345,11 +359,7 @@ class RichTextBox(TextBox):
                 text_buffer.apply_tag_by_name(value, line, end)
         self.text_buffer.set_text('')
         deserial = self.text_buffer.register_deserialize_tagset()
-        self.text_buffer.deserialize(self.text_buffer, deserial,
-            self.text_buffer.get_start_iter(),
-            text_buffer.serialize(text_buffer,
-            "application/x-gtk-text-buffer-rich-text",
-            text_buffer.get_start_iter(), text_buffer.get_end_iter()))
+        return text_buffer, deserial
 
     def gen_tag(self, val, tag):
         '''

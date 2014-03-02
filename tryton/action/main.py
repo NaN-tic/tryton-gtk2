@@ -8,8 +8,7 @@ import gettext
 import tempfile
 import os
 import webbrowser
-from tryton.pyson import PYSONEncoder
-from tryton.common import RPCProgress, RPCExecute, RPCException
+from tryton.common import RPCProgress, RPCExecute, RPCException, slugify
 
 _ = gettext.gettext
 
@@ -40,16 +39,15 @@ class Action(object):
         if not print_p and direct_print:
             print_p = True
         dtemp = tempfile.mkdtemp(prefix='tryton_')
+
         fp_name = os.path.join(dtemp,
-                name.replace(os.sep, '_').replace(os.altsep or os.sep, '_') \
-            + os.extsep
-            + type.replace(os.sep, '_').replace(os.altsep or os.sep, '_'))
+            slugify(name) + os.extsep + slugify(type))
         with open(fp_name, 'wb') as file_d:
             file_d.write(data)
         if email_print:
             mailto(to=email.get('to'), cc=email.get('cc'),
-                    subject=email.get('subject'), body=email.get('body'),
-                    attachment=fp_name)
+                subject=email.get('subject'), body=email.get('body'),
+                attachment=fp_name)
         else:
             file_open(fp_name, type, print_p=print_p)
         return True
@@ -59,7 +57,7 @@ class Action(object):
         if not action_type:
             res = False
             try:
-                res = RPCExecute('model', 'ir.action', 'read', act_id,
+                res, = RPCExecute('model', 'ir.action', 'read', [act_id],
                     ['type'], context=context)
             except RPCException:
                 return
@@ -67,7 +65,7 @@ class Action(object):
                 raise Exception('ActionNotFound')
             action_type = res['type']
         try:
-            res = RPCExecute('model', action_type, 'search_read',
+            res, = RPCExecute('model', action_type, 'search_read',
                 [('action', '=', act_id)], 0, 1, None, None,
                 context=context)
         except RPCException:
@@ -85,6 +83,7 @@ class Action(object):
         if 'type' not in (action or {}):
             return
 
+        data['action_id'] = action['id']
         if action['type'] == 'ir.action.act_window':
             view_ids = False
             view_mode = None
@@ -96,28 +95,23 @@ class Action(object):
 
             action.setdefault('pyson_domain', '[]')
             ctx = {
-                'active_id': data.get('id', False),
+                'active_model': data.get('res_model'),
+                'active_id': data.get('id'),
                 'active_ids': data.get('ids', []),
             }
             ctx.update(rpc.CONTEXT)
-            eval_ctx = ctx.copy()
-            eval_ctx['_user'] = rpc._USER
-            action_ctx = PYSONDecoder(eval_ctx).decode(
-                    action.get('pyson_context') or '{}')
+            ctx['_user'] = rpc._USER
+            decoder = PYSONDecoder(ctx)
+            action_ctx = decoder.decode(action.get('pyson_context') or '{}')
             ctx.update(action_ctx)
             ctx.update(context)
 
-            domain_context = ctx.copy()
-            domain_context['context'] = ctx
-            domain_context['_user'] = rpc._USER
-            domain = PYSONDecoder(domain_context).decode(
-                action['pyson_domain'])
-
-            search_context = ctx.copy()
-            search_context['context'] = ctx
-            search_context['_user'] = rpc._USER
-            search_value = PYSONDecoder(search_context).decode(
-                    action['pyson_search_value'] or '[]')
+            ctx['context'] = ctx
+            decoder = PYSONDecoder(ctx)
+            domain = decoder.decode(action['pyson_domain'])
+            order = decoder.decode(action['pyson_order'])
+            search_value = decoder.decode(action['pyson_search_value'] or '[]')
+            tab_domain = [(n, decoder.decode(d)) for n, d in action['domains']]
 
             name = False
             if action.get('window_name', True):
@@ -127,11 +121,12 @@ class Action(object):
             res_id = action.get('res_id', data.get('res_id'))
 
             Window.create(view_ids, res_model, res_id, domain,
-                    action_ctx, view_mode, name=name,
+                    action_ctx, order, view_mode, name=name,
                     limit=action.get('limit'),
                     auto_refresh=action.get('auto_refresh'),
                     search_value=search_value,
-                    icon=(action.get('icon.rec_name') or ''))
+                    icon=(action.get('icon.rec_name') or ''),
+                    tab_domain=tab_domain)
         elif action['type'] == 'ir.action.wizard':
             Window.create_wizard(action['wiz_name'], data,
                 direct_print=action.get('direct_print', False),
@@ -154,13 +149,12 @@ class Action(object):
     def exec_keyword(keyword, data=None, context=None, warning=True,
             alwaysask=False):
         actions = []
-        if 'id' in data:
-            model_id = data.get('id', False)
-            try:
-                actions = RPCExecute('model', 'ir.action.keyword',
-                    'get_keyword', keyword, (data['model'], model_id))
-            except RPCException:
-                return False
+        model_id = data.get('id', False)
+        try:
+            actions = RPCExecute('model', 'ir.action.keyword',
+                'get_keyword', keyword, (data['model'], model_id))
+        except RPCException:
+            return False
 
         keyact = {}
         for action in actions:
@@ -181,26 +175,12 @@ class Action(object):
         Evaluate the action with the record.
         '''
         action = action.copy()
-        if atype in ('print', 'action'):
-            email = {}
-            if 'pyson_email' in action:
-                email = record.expr_eval(action['pyson_email'])
-                if not email:
-                    email = {}
-            if 'subject' not in email:
-                email['subject'] = action['name'].replace('_', '')
-            action['email'] = email
-        elif atype == 'relate':
-            encoder = PYSONEncoder()
-            if 'pyson_domain' in action:
-                action['pyson_domain'] = encoder.encode(
-                    record.expr_eval(action['pyson_domain'], check_load=False))
-            if 'pyson_context' in action:
-                action['pyson_context'] = encoder.encode(
-                    record.expr_eval(action['pyson_context'],
-                        check_load=False))
-
-        else:
-            raise NotImplementedError("Action type '%s' is not supported" %
-                atype)
+        email = {}
+        if 'pyson_email' in action:
+            email = record.expr_eval(action['pyson_email'])
+            if not email:
+                email = {}
+        if 'subject' not in email:
+            email['subject'] = action['name'].replace('_', '')
+        action['email'] = email
         return action

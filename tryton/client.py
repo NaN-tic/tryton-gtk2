@@ -18,7 +18,6 @@ pygtk.require('2.0')
 import gtk
 import gobject
 gobject.threads_init()
-import logging
 from urlparse import urlparse
 import threading
 
@@ -67,24 +66,8 @@ class TrytonClient(object):
                 CONFIG['login.port'] = port
                 CONFIG['login.db'] = database
                 CONFIG['login.expanded'] = True
-        logging.basicConfig()
         translate.set_language_direction(CONFIG['client.language_direction'])
         translate.setlang(CONFIG['client.lang'])
-        loglevel = {
-                'DEBUG': logging.DEBUG,
-                'INFO': logging.INFO,
-                'WARNING': logging.WARNING,
-                'ERROR': logging.ERROR,
-                'CRITICAL': logging.CRITICAL,
-                }
-        for logger in CONFIG['logging.logger'].split(','):
-            if logger:
-                log = logging.getLogger(logger)
-                log.setLevel(loglevel[CONFIG['logging.level'].upper()])
-        if CONFIG['logging.default']:
-            logging.getLogger().setLevel(
-                    loglevel[CONFIG['logging.default'].upper()])
-
         self.quit_client = (threading.Event()
             if sys.platform == 'win32' else None)
         common.ICONFACTORY.load_client_icons()
@@ -117,13 +100,6 @@ class TrytonClient(object):
             main.sig_tips()
         main.sig_login()
 
-        #XXX psyco breaks report printing
-        #try:
-        #    import psyco
-        #    psyco.full()
-        #except ImportError:
-        #    pass
-
         if sys.platform == 'win32':
             # http://faq.pygtk.org/index.py?req=show&file=faq21.003.htp
             def sleeper():
@@ -140,8 +116,7 @@ class TrytonClient(object):
                 gtk.main()
         except KeyboardInterrupt:
             CONFIG.save()
-            if hasattr(gtk, 'accel_map_save'):
-                gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
+            gtk.accel_map_save(os.path.join(get_config_dir(), 'accel.map'))
 
 if __name__ == "__main__":
     CLIENT = TrytonClient()

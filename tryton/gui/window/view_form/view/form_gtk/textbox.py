@@ -26,7 +26,6 @@ class TextBox(WidgetInterface, TranslateMixin):
         self.textview.set_wrap_mode(gtk.WRAP_WORD)
         #TODO better tab solution
         self.textview.set_accepts_tab(False)
-        self.textview.connect('focus-in-event', lambda x, y: self._focus_in())
         self.textview.connect('focus-out-event',
             lambda x, y: self._focus_out())
         self.textview.connect('key-press-event', self.send_modified)
@@ -68,7 +67,8 @@ class TextBox(WidgetInterface, TranslateMixin):
     def translate_widget_get(widget):
         textview = widget.get_child()
         buf = textview.get_buffer()
-        return buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        return buf.get_text(buf.get_start_iter(), buf.get_end_iter(),
+            False).decode('utf-8')
 
     @staticmethod
     def translate_widget_set_readonly(widget, value):
@@ -128,21 +128,25 @@ class TextBox(WidgetInterface, TranslateMixin):
         buf = self.textview.get_buffer()
         iter_start = buf.get_start_iter()
         iter_end = buf.get_end_iter()
-        return buf.get_text(iter_start, iter_end, False)
+        return buf.get_text(iter_start, iter_end, False).decode('utf-8')
 
     def set_value(self, record, field):
         field.set_client(record, self.get_value())
+
+    def set_buffer(self, value):
+        if value == self.get_value():
+            return
+        buf = self.textview.get_buffer()
+        buf.delete(buf.get_start_iter(), buf.get_end_iter())
+        iter_start = buf.get_start_iter()
+        buf.insert(iter_start, value)
 
     def display(self, record, field):
         super(TextBox, self).display(record, field)
         value = field and field.get(record)
         if not value:
             value = ''
-        buf = self.textview.get_buffer()
-        buf.delete(buf.get_start_iter(), buf.get_end_iter())
-        iter_start = buf.get_start_iter()
-        buf.insert(iter_start, value)
-
+        self.set_buffer(value)
         if gtkspell:
             spell = None
             try:

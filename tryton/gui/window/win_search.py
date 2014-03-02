@@ -14,7 +14,7 @@ _ = gettext.gettext
 class WinSearch(NoModal):
 
     def __init__(self, model, callback, sel_multi=True, ids=None, context=None,
-            domain=None, view_ids=None, views_preload=None):
+            domain=None, view_ids=None, views_preload=None, new=True):
         NoModal.__init__(self)
         if views_preload is None:
             views_preload = {}
@@ -36,10 +36,14 @@ class WinSearch(NoModal):
         self.but_cancel = self.win.add_button(gtk.STOCK_CANCEL,
             gtk.RESPONSE_CANCEL)
         self.but_find = self.win.add_button(gtk.STOCK_FIND, gtk.RESPONSE_APPLY)
+        if new and common.MODELACCESS[model]['create']:
+            self.but_new = self.win.add_button(gtk.STOCK_NEW,
+                gtk.RESPONSE_ACCEPT)
+            self.but_new.set_accel_path('<tryton>/Form/New', self.accel_group)
+
         self.but_ok = self.win.add_button(gtk.STOCK_OK, gtk.RESPONSE_OK)
         self.but_ok.add_accelerator('clicked', self.accel_group,
                 gtk.keysyms.Return, gtk.gdk.CONTROL_MASK, gtk.ACCEL_VISIBLE)
-        self.but_new = self.win.add_button(gtk.STOCK_NEW, gtk.RESPONSE_ACCEPT)
 
         hbox = gtk.HBox()
         hbox.show()
@@ -54,6 +58,8 @@ class WinSearch(NoModal):
             row_activate=self.sig_activate)
         self.view = self.screen.current_view
         self.view.unset_editable()
+        # Prevent to set tree_state
+        self.screen.tree_states_done.add(id(self.view))
         sel = self.view.widget_tree.get_selection()
 
         if not sel_multi:
@@ -101,7 +107,7 @@ class WinSearch(NoModal):
     def response(self, win, response_id):
         res = None
         if response_id == gtk.RESPONSE_OK:
-            res = self.screen.sel_ids_get()
+            res = [r.id for r in self.screen.selected_records]
         elif response_id == gtk.RESPONSE_APPLY:
             self.screen.search_filter(self.screen.screen_container.get_text())
             return
