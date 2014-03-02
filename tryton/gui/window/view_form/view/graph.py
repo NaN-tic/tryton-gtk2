@@ -5,12 +5,13 @@ from interface import ParserView
 
 class ViewGraph(ParserView):
 
-    def __init__(self, window, screen, widget, children=None,
-            buttons=None, toolbar=None, notebooks=None, cursor_widget=None):
-        super(ViewGraph, self).__init__(window, screen, widget, children,
-                buttons, toolbar, notebooks, cursor_widget)
+    def __init__(self, screen, widget, children=None, state_widgets=None,
+            notebooks=None, cursor_widget=None, children_field=None):
+        super(ViewGraph, self).__init__(screen, widget, children,
+            state_widgets, notebooks, cursor_widget, children_field)
         self.view_type = 'graph'
         self.widgets = children
+        self.editable = False
 
     def __getitem__(self, name):
         return None
@@ -20,18 +21,9 @@ class ViewGraph(ParserView):
         for widget in self.widgets.keys():
             self.widgets[widget].destroy()
             del self.widgets[widget]
-        del self.widget
-        del self.screen
-        del self.buttons
-
-    def cancel(self):
-        pass
 
     def set_value(self):
         pass
-
-    def sel_ids_get(self):
-        return []
 
     def reset(self):
         pass
@@ -43,3 +35,6 @@ class ViewGraph(ParserView):
 
     def set_cursor(self, new=False, reset_view=True):
         pass
+
+    def get_fields(self):
+        return []
